@@ -225,12 +225,21 @@ def islands(p):
 # cable leaves the base on the right and runs back along the helmet's right side. The ENVG-B's own box (the FBX
 # Battery's box islands, without its cable, which ran to the flipping device) takes the pack's place with the same
 # inner face; a 5 mm cable of our own follows the GPNVG-18's route from the shroud plate to the box.
-GP_PACK = np.array([0.0, 0.097, -0.26])
-GP_PACK_UP = np.array([0.0, 0.87, 0.5])
-GP_PACK_OUT = np.array([0.0, 0.5, -0.87])
-GP_PACK_THICK = 0.043
-CABLE_ROUTE = [(0.045, 0.020, -0.005), (0.093, 0.038, -0.037), (0.100, 0.060, -0.080), (0.110, 0.098, -0.140),
-               (0.108, 0.099, -0.186), (0.099, 0.079, -0.227), (0.075, 0.075, -0.250)]
+# The pack's helmet-side face, as the user asked ("照着 GPNVG-18 的法线来做"): its normal (fitted to the face's own
+# points; the pack's overall thin axis is 3 deg off it) and its plane, n.p = GP_PACK_INNER. The ENVG-B box's own
+# helmet-side face is put on that plane with that normal, centred on the pack.
+GP_PACK = np.array([0.0, 0.0972, -0.2595])
+GP_PACK_UP = np.array([0.0, 0.8382, 0.54537])
+GP_PACK_OUT = np.array([0.0, 0.54537, -0.8382])
+GP_PACK_INNER = 0.24767
+# The cable is flexible (the user: only its two ends must sit right, at the shroud plate and at the box; the middle
+# may bend or be shorter): our own tube from the plate to the box, through the GPNVG-18 cable's centreline (6 mm
+# slices of its cable pieces, from where it leaves its base), which lies on the helmet as the GPNVG-18's does.
+CABLE_ROUTE = [(0.0453, 0.0280, -0.0101), (0.0478, 0.0370, -0.0153), (0.0538, 0.0417, -0.0197), (0.0609, 0.0424, -0.0224),
+               (0.0865, 0.0341, -0.0290), (0.0911, 0.0345, -0.0339), (0.0933, 0.0364, -0.0379), (0.0955, 0.0461, -0.0522),
+               (0.1024, 0.0769, -0.0979), (0.1038, 0.0867, -0.1123), (0.1096, 0.0967, -0.1333), (0.1111, 0.1008, -0.1477),
+               (0.1103, 0.1029, -0.1651), (0.1075, 0.0993, -0.1854), (0.1039, 0.0924, -0.2038), (0.0988, 0.0782, -0.2269),
+               (0.0909, 0.0647, -0.2474)]
 CABLE_RADIUS = 0.0025
 BATTERY_BOX = (250, 73, 32)  # vertex counts of the FBX Battery islands that make the box (the rest is its cable)
 CABLE_UV = (0.7029, 0.3021)  # the FBX cable's own texels
@@ -276,13 +285,12 @@ def battery(parts, colour, plate):
     G = np.column_stack([np.cross(up_, out_), up_, out_])
     R = G @ B.T
     assert np.isclose(np.linalg.det(R), 1.0)
-    q = (box - bc) @ R.T
-    inward = (GP_PACK_THICK - np.ptp(q @ GP_PACK_OUT)) / 2
-    q = q + GP_PACK - inward * GP_PACK_OUT
+    q = (box - bc) @ R.T + GP_PACK
+    q = q + (GP_PACK_INNER - (q @ out_).min()) * out_  # the box's helmet-side face on the pack's face plane
     qn = bn @ R.T
     start = np.array([plate[:, 0].max() + 0.002, (plate[:, 1].min() + plate[:, 1].max()) / 2, 0.008])
     end = np.array([q[:, 0].max() + 0.002, 0.092, -0.248])
-    cp, cn = tube(catmull(np.array([start, *CABLE_ROUTE, end])), CABLE_RADIUS)
+    cp, cn = tube(catmull(np.array([start, *CABLE_ROUTE, end]), 8), CABLE_RADIUS)
     cu = np.tile(np.array(CABLE_UV, np.float32), (len(cp), 1))
     print(f'{colour}: battery box at {q.mean(0).round(3)}, cable {np.linalg.norm(np.diff(catmull(np.array([start, *CABLE_ROUTE, end])), axis=0), axis=1).sum():.3f} m')
     return np.vstack([q, cp]), np.vstack([qn, cn]), np.vstack([bu, cu]).astype(np.float32)
