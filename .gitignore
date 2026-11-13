@@ -24,3 +24,16 @@ item/Unity/UserSettings/
 **/obj/
 *.log
 dump/
+# client (thermal plugin)
+client/Unity/Library/
+client/Unity/Temp/
+client/Unity/Logs/
+client/Unity/obj/
+client/Unity/UserSettings/
+client/build/out/
+client/preview/
+item/Unity/Assets/Source/
+item/Unity/Assets/Source.meta
+item/Unity/Assets/Generated/
+item/Unity/Assets/Generated.meta
+item/built/
