@@ -60,7 +60,11 @@ internal static class EnvgHud
                     if (f.characterLookupTable.ContainsKey(c))
                         have++;
                 string n = f.name.ToLowerInvariant();
-                int score = have * 10 + (n.Contains("bender") ? 5 : 0) + (n.Contains("bold") || n.Contains("black") ? 0 : 2);
+                // never one the game marks as not for use, an upright face before an italic one, a regular weight
+                if (n.Contains("don't use") || n.Contains("dont use") || n.Contains("do not use"))
+                    continue;
+                int score = have * 10 + (n.Contains("bender") ? 5 : 0) + (n.Contains("italic") || n.Contains("oblique") ? 0 : 4)
+                    + (n.Contains("bold") || n.Contains("black") ? 0 : 2);
                 if (score > bestScore)
                 {
                     bestScore = score;
