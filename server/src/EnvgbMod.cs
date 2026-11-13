@@ -50,6 +50,35 @@ public class EnvgbMod(
             return Task.CompletedTask;
         }
         string sourceJson = JsonSerializer.Serialize(source, options);
+        // The removable eyecup pairs first (db "eyecups"), so the ENVG-B's mod_eyecup slot can take them.
+        var eyecups = new List<MongoId>();
+        var eyecupDb = db["eyecups"]!.AsObject();
+        if (templateTable.Items.TryGetValue(new MongoId(eyecupDb["clone"]!.GetValue<string>()), out var cupSource))
+        {
+            string cupJson = JsonSerializer.Serialize(cupSource, options);
+            foreach (var entry in eyecupDb["items"]!.AsArray())
+            {
+                var e = entry!.AsObject();
+                string bundle = e["bundle"]!.GetValue<string>();
+                if (!File.Exists(System.IO.Path.Combine(modPath, "bundles", bundle))) { logger.Error($"ENVG-B eyecups {e["name"]}: bundles/{bundle} is missing"); continue; }
+                var node = JsonNode.Parse(cupJson)!.AsObject();
+                node["_id"] = e["id"]!.GetValue<string>();
+                node["_name"] = e["name"]!.GetValue<string>();
+                var props = node["_props"]!.AsObject();
+                props["Prefab"] = new JsonObject { ["path"] = bundle, ["rcid"] = "" };
+                props["Weight"] = 0.06;
+                props["Ergonomics"] = 0;
+                props["ConflictingItems"] = new JsonArray();
+                var id = Create(node, e, options, eyecupDb["handbookParentId"]!.GetValue<string>(), eyecupDb["price"]!.GetValue<double>());
+                if (id is MongoId made)
+                {
+                    eyecups.Add(made);
+                    AddListing(made, new MongoId(e["assortId"]!.GetValue<string>()), eyecupDb["listing"]!.AsObject(), null);
+                }
+            }
+        }
+        else logger.Error("ENVG-B eyecups not loaded: their clone template is missing");
+
         var added = new List<MongoId>();
         foreach (var entry in db["items"]!.AsArray())
         {
@@ -74,38 +103,23 @@ public class EnvgbMod(
             // match; both are only measured from screenshots.
             props["Color"] = new JsonObject { ["r"] = 156, ["g"] = 217, ["b"] = 255, ["a"] = 254 };
             props["Intensity"] = 1.4;
-            var template = JsonSerializer.Deserialize<TemplateItem>(node, options)
-                ?? throw new InvalidOperationException("ENVG-B template did not deserialize");
-
-            var locales = new Dictionary<string, LocaleDetails>();
-            foreach (var pair in e["locales"]!.AsObject())
-                locales[pair.Key] = new LocaleDetails
-                {
-                    Name = pair.Value!["name"]!.GetValue<string>(),
-                    ShortName = pair.Value!["shortName"]!.GetValue<string>(),
-                    Description = pair.Value!["description"]!.GetValue<string>()
-                };
-            double price = db["price"]!.GetValue<double>();
-            var result = customItemService.CreateItem(new NewItemDetails
+            // The eyecups come off: slot mod_eyecup (the prefab's node of that name under the device), either colour fits.
+            var filter = new JsonArray(); foreach (var c in eyecups) filter.Add(c.ToString());
+            props["Slots"] = new JsonArray(new JsonObject
             {
-                NewItem = template,
-                AddToHandbook = true,
-                HandbookParentId = db["handbookParentId"]!.GetValue<string>(),
-                HandbookPriceRoubles = price,
-                FleaPriceRoubles = price,
-                AddToFleaPriceDb = true,
-                Locales = locales
-            }, Assembly.GetExecutingAssembly());
-            if (!result.Success)
-            {
-                logger.Error($"ENVG-B {e["name"]} was not created: " + string.Join("; ", result.Errors ?? []));
-                continue;
-            }
-            AddListing(template.Id, new MongoId(e["assortId"]!.GetValue<string>()), db["listing"]!.AsObject());
-            added.Add(template.Id);
+                ["_id"] = e["eyecupSlotId"]!.GetValue<string>(), ["_name"] = "mod_eyecup", ["_parent"] = e["id"]!.GetValue<string>(),
+                ["_props"] = new JsonObject { ["filters"] = new JsonArray(new JsonObject { ["Shift"] = 0, ["Filter"] = filter }) },
+                ["_required"] = false, ["_mergeSlotWithChildren"] = false, ["_proto"] = "55d30c4c4bdc2db4468b457e"
+            });
+            if (Create(node, e, options, db["handbookParentId"]!.GetValue<string>(), db["price"]!.GetValue<double>()) is not MongoId envgb) continue;
+            // Sold with its own colour's eyecups on.
+            var cup = new MongoId(e["eyecup"]!.GetValue<string>());
+            AddListing(envgb, new MongoId(e["assortId"]!.GetValue<string>()), db["listing"]!.AsObject(),
+                eyecups.Contains(cup) ? (cup, new MongoId(e["eyecupAssortId"]!.GetValue<string>())) : null);
+            added.Add(envgb);
         }
         int slots = GoWhereItGoes(clone, added);
-        if (added.Count > 0) logger.Success($"ENVG-B loaded: {added.Count} colours, fits {slots} slots");
+        if (added.Count > 0) logger.Success($"ENVG-B loaded: {added.Count} colours, {eyecups.Count} eyecup pairs, fits {slots} slots");
         return Task.CompletedTask;
     }
 
@@ -129,7 +143,29 @@ public class EnvgbMod(
         return slots;
     }
 
-    void AddListing(MongoId item, MongoId assortId, JsonObject listing)
+    MongoId? Create(JsonObject node, JsonObject e, JsonSerializerOptions options, string handbookParent, double price)
+    {
+        var template = JsonSerializer.Deserialize<TemplateItem>(node, options)
+            ?? throw new InvalidOperationException($"{e["name"]}: template did not deserialize");
+        var locales = new Dictionary<string, LocaleDetails>();
+        foreach (var pair in e["locales"]!.AsObject())
+            locales[pair.Key] = new LocaleDetails
+            {
+                Name = pair.Value!["name"]!.GetValue<string>(),
+                ShortName = pair.Value!["shortName"]!.GetValue<string>(),
+                Description = pair.Value!["description"]!.GetValue<string>()
+            };
+        var result = customItemService.CreateItem(new NewItemDetails
+        {
+            NewItem = template, AddToHandbook = true, HandbookParentId = handbookParent,
+            HandbookPriceRoubles = price, FleaPriceRoubles = price, AddToFleaPriceDb = true, Locales = locales
+        }, Assembly.GetExecutingAssembly());
+        if (result.Success) return template.Id;
+        logger.Error($"ENVG-B {e["name"]} was not created: " + string.Join("; ", result.Errors ?? []));
+        return null;
+    }
+
+    void AddListing(MongoId item, MongoId assortId, JsonObject listing, (MongoId tpl, MongoId id)? child)
     {
         if (!tradersTable.TryGetValue(new MongoId(listing["traderId"]!.GetValue<string>()), out var trader) || trader.Assort is null)
         {
@@ -143,8 +179,10 @@ public class EnvgbMod(
             Template = item,
             ParentId = "hideout",
             SlotId = "hideout",
-            Upd = new Upd { UnlimitedCount = true, StackObjectsCount = 999999, BuyRestrictionMax = 1, BuyRestrictionCurrent = 0 }
+            Upd = new Upd { UnlimitedCount = true, StackObjectsCount = 999999, BuyRestrictionMax = listing["limit"]?.GetValue<int>() ?? 1, BuyRestrictionCurrent = 0 }
         });
+        if (child is { } c)
+            trader.Assort.Items.Add(new Item { Id = c.id, Template = c.tpl, ParentId = assortId.ToString(), SlotId = "mod_eyecup" });
         trader.Assort.BarterScheme[assortId] =
         [
             [new BarterScheme { Count = listing["price"]!.GetValue<double>(), Template = new MongoId(listing["currency"]!.GetValue<string>()) }]

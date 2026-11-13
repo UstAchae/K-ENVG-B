@@ -19,7 +19,10 @@
      "shortName": "ENVG-B",
      "description": "增强型双目夜视仪（ENVG-B）。两支白磷像增强管，中间是一台非制冷热像仪。热像画面叠加在夜视画面上：可以只勾出发热物体的轮廓，也可以融合成白热或黑热画面。放下夜视仪后用左右方向键切换模式。"
     }
-   }
+   },
+   "eyecup": "6a3e9e4b0000000000000003",
+   "eyecupSlotId": "6a3e9e4b0000000000000201",
+   "eyecupAssortId": "6a3e9e4b0000000000000103"
   },
   {
    "id": "6a3e9e4b0000000000000002",
@@ -37,7 +40,10 @@
      "shortName": "ENVG-B",
      "description": "增强型双目夜视仪（ENVG-B）。两支白磷像增强管，中间是一台非制冷热像仪。热像画面叠加在夜视画面上：可以只勾出发热物体的轮廓，也可以融合成白热或黑热画面。放下夜视仪后用左右方向键切换模式。"
     }
-   }
+   },
+   "eyecup": "6a3e9e4b0000000000000004",
+   "eyecupSlotId": "6a3e9e4b0000000000000202",
+   "eyecupAssortId": "6a3e9e4b0000000000000104"
   }
  ],
  "listing": {
@@ -45,5 +51,55 @@
   "currency": "5696686a4bdc2da3298b456a",
   "price": 1890,
   "loyalty": 4
+ },
+ "eyecups": {
+  "clone": "618b9671d14d6d5ab879c5ea",
+  "handbookParentId": "5b5f755f86f77447ec5d770e",
+  "price": 3000,
+  "listing": {
+   "traderId": "5935c25fb3acc3127c3d8cd9",
+   "currency": "5696686a4bdc2da3298b456a",
+   "price": 30,
+   "loyalty": 1,
+   "limit": 4
+  },
+  "items": [
+   {
+    "id": "6a3e9e4b0000000000000003",
+    "name": "envgb_eyecup_black",
+    "bundle": "ustachae_envgb/envgb_eyecup_black.bundle",
+    "assortId": "6a3e9e4b0000000000000105",
+    "locales": {
+     "en": {
+      "name": "ENVG-B eyecups (Black)",
+      "shortName": "ENVG-B cups",
+      "description": "Rubber eyecups for the AN/PSQ-42 ENVG-B, a pair. They seal the eyepieces against the face, keeping light from the image out of sight and the eyes at the right distance. Take them off to bring the eyes closer to the eyepiece lenses."
+     },
+     "ch": {
+      "name": "ENVG-B 眼罩（黑色）",
+      "shortName": "ENVG-B 眼罩",
+      "description": "AN/PSQ-42 ENVG-B 的橡胶眼罩，一对。贴住脸部遮挡目镜漏光，并让眼睛保持合适的距离。取下后眼睛可以更靠近目镜镜片。"
+     }
+    }
+   },
+   {
+    "id": "6a3e9e4b0000000000000004",
+    "name": "envgb_eyecup_tan",
+    "bundle": "ustachae_envgb/envgb_eyecup_tan.bundle",
+    "assortId": "6a3e9e4b0000000000000106",
+    "locales": {
+     "en": {
+      "name": "ENVG-B eyecups (Tan)",
+      "shortName": "ENVG-B cups",
+      "description": "Rubber eyecups for the AN/PSQ-42 ENVG-B, a pair. They seal the eyepieces against the face, keeping light from the image out of sight and the eyes at the right distance. Take them off to bring the eyes closer to the eyepiece lenses."
+     },
+     "ch": {
+      "name": "ENVG-B 眼罩（沙色）",
+      "shortName": "ENVG-B 眼罩",
+      "description": "AN/PSQ-42 ENVG-B 的橡胶眼罩，一对。贴住脸部遮挡目镜漏光，并让眼睛保持合适的距离。取下后眼睛可以更靠近目镜镜片。"
+     }
+    }
+   }
+  ]
  }
 }

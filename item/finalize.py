@@ -64,8 +64,8 @@ def finalize_material(o, t, glass):
 
 
 manifest = []
-for colour in COLOURS:
-    key = f'ustachae_envgb/envgb_{colour}.bundle'
+KEYS = [(f'ustachae_envgb/envgb_{c}.bundle', {'body', 'glass'}) for c in COLOURS] +        [(f'ustachae_envgb/envgb_eyecup_{c}.bundle', {'eyecup_body'}) for c in COLOURS]
+for key, expected in KEYS:
     built = env.load_file((ITEM / 'built' / key).read_bytes(), name=key)
     done = set()
     for o in refs.objects(built):
@@ -73,7 +73,7 @@ for colour in COLOURS:
             t = o.read_typetree()
             kind = t['m_Name'].replace('mat_', '')  # CreateAsset renamed them after the asset file
             finalize_material(o, t, kind == 'glass'); done.add(kind)
-    assert done == {'body', 'glass'}, (key, done)
+    assert done == expected, (key, done)
     out = OUT / 'bundles' / key
     out.parent.mkdir(parents=True, exist_ok=True)
     for name, f in list(built.files.items()):

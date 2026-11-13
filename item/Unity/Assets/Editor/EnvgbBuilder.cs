@@ -53,13 +53,15 @@ public static class EnvgbBuilder {
   AssetDatabase.ImportAsset(p,ImportAssetOptions.ForceSynchronousImport);return AssetDatabase.LoadAssetAtPath<Shader>(p);
  }
  public static string BundleKey(string colour)=>"ustachae_envgb/envgb_"+colour+".bundle";
+ public static string EyecupKey(string colour)=>"ustachae_envgb/envgb_eyecup_"+colour+".bundle";
+ public const string EyecupSlot="mod_eyecup",EyecupNode="envgb_eyecup_LOD0";
 
  public static void Build(){
   PlayerSettings.colorSpace=ColorSpace.Linear;
   if(AssetDatabase.IsValidFolder(Gen))AssetDatabase.DeleteAsset(Gen);
   Directory.CreateDirectory(Gen);Directory.CreateDirectory(Out);AssetDatabase.Refresh();
   var stub=StubShader();
-  var builds=Directory.GetDirectories(Src).Select(d=>BuildOne(Path.GetFileName(d),stub)).ToArray();
+  var builds=Directory.GetDirectories(Src).SelectMany(d=>new[]{BuildOne(Path.GetFileName(d),stub),BuildEyecup(Path.GetFileName(d),stub)}).ToArray();
   AssetDatabase.SaveAssets();
   if(BuildPipeline.BuildAssetBundles(Out,builds,BuildAssetBundleOptions.ChunkBasedCompression|BuildAssetBundleOptions.StrictMode,BuildTarget.StandaloneWindows64)==null)throw new Exception("Build failed");
   Debug.Log("ENVGB_BUILD_SUCCESS "+string.Join(",",builds.Select(b=>b.assetBundleName)));
@@ -103,6 +105,11 @@ public static class EnvgbBuilder {
   gl.AddComponent<MeshFilter>().sharedMesh=glassMesh;
   var glR=gl.AddComponent<MeshRenderer>();glR.sharedMaterial=glass;glR.shadowCastingMode=ShadowCastingMode.Off;glR.receiveShadows=true;renderers.Add(glR);
 
+  // Slot for the removable eyecups (their own item). The game turns an attached item's root +90 deg about X under
+  // the slot node (as every slot node in EFT's prefabs is turned -90), so the node carries -90 and the eyecups,
+  // modelled in the device frame, land where they were.
+  var slot=new GameObject(EyecupSlot);slot.transform.SetParent(lod,false);slot.transform.localRotation=Quaternion.Euler(-90,0,0);
+
   // Thermal objective: centre of its window, +Z out of the front (the device looks along -Y), +Y toward the mount.
   var lens=new GameObject(ThermalLens);lens.transform.SetParent(lod,false);
   lens.transform.localPosition=new Vector3(info.thermalLens[0],info.thermalLens[1],info.thermalLens[2]);
@@ -128,5 +135,33 @@ public static class EnvgbBuilder {
 
   string prefab=gen+"/"+name+".prefab";PrefabUtility.SaveAsPrefabAsset(root,prefab);UnityEngine.Object.DestroyImmediate(root);
   return new AssetBundleBuild{assetBundleName=BundleKey(colour),assetNames=new[]{prefab}};
+ }
+ // The eyecup pair: its own item and bundle, its mesh in the device frame (see the slot node above).
+ static AssetBundleBuild BuildEyecup(string colour,Shader stub){
+  string src=Src+"/"+colour,gen=Gen+"/eyecup_"+colour;Directory.CreateDirectory(gen);AssetDatabase.Refresh();
+  string name="envgb_eyecup_"+colour;
+  var mesh=ReadMesh(src+"/eyecup.bin",EyecupNode,gen);
+  // Its own 1024 copies of the maps (the eyecups use a small part of the atlas), so this bundle stays small.
+  Texture2D Small(string file,TextureImporterType type,bool srgb){
+   string dst=gen+"/"+file;File.Copy(src+"/"+file,dst,true);AssetDatabase.ImportAsset(dst,ImportAssetOptions.ForceSynchronousImport);
+   var im=(TextureImporter)AssetImporter.GetAtPath(dst);im.textureType=type;im.sRGBTexture=srgb;im.mipmapEnabled=true;im.anisoLevel=4;im.maxTextureSize=1024;im.SaveAndReimport();
+   return AssetDatabase.LoadAssetAtPath<Texture2D>(dst);
+  }
+  var body=new Material(stub){name=name+"_body"};
+  body.SetTexture("_MainTex",Small("albedo.png",TextureImporterType.Default,true));
+  body.SetTexture("_SpecMap",Small("spec.png",TextureImporterType.Default,false));
+  body.SetTexture("_BumpMap",Small("normal.png",TextureImporterType.NormalMap,false));
+  AssetDatabase.CreateAsset(body,gen+"/mat_eyecup_body.asset");
+  var root=new GameObject(name);
+  var lod=new GameObject(EyecupNode);lod.transform.SetParent(root.transform,false);
+  lod.AddComponent<MeshFilter>().sharedMesh=mesh;
+  var r=lod.AddComponent<MeshRenderer>();r.sharedMaterial=body;r.shadowCastingMode=ShadowCastingMode.On;r.receiveShadows=true;
+  var box=lod.AddComponent<BoxCollider>();box.center=mesh.bounds.center;box.size=mesh.bounds.size;box.enabled=false;
+  var lodGroup=root.AddComponent<LODGroup>();lodGroup.SetLODs(new[]{new LOD(0.01f,new Renderer[]{r})});lodGroup.size=0.1f;
+  var pivot=root.AddComponent<PreviewPivot>();
+  pivot.pivotPosition=mesh.bounds.center;pivot.pivotRotation=new Quaternion(0.0074694254f,0.98476535f,0.04375f,-0.16812912f);pivot.scale=Vector3.one;
+  pivot.Icon=new PreviewPivot.IconSettings{rotation=new Quaternion(-0.049385615f,-0.94817758f,-0.25407037f,0.1843058f),boundsScale=1.2f,perspective=15,orthographicSize=10};
+  string prefab=gen+"/"+name+".prefab";PrefabUtility.SaveAsPrefabAsset(root,prefab);UnityEngine.Object.DestroyImmediate(root);
+  return new AssetBundleBuild{assetBundleName=EyecupKey(colour),assetNames=new[]{prefab}};
  }
 }

@@ -25,7 +25,8 @@ ITEM = Path(__file__).resolve().parent
 UNITY = ITEM / 'Unity/Assets/Source'
 COLOURS = ('Black', 'Tan')
 DEVICE = ['Tube_R', 'Tube_L', 'Eyecup_R', 'Eyecup_L', 'Bridge', 'Mount_02', 'Mount_03', 'Mount_04', 'Mount_05']
-BODY = ['Tube_R', 'Tube_L', 'Eyecup_R', 'Eyecup_L', 'Bridge']  # the device node's own mesh (the mount is jointed)
+BODY = ['Tube_R', 'Tube_L', 'Bridge']  # the device node's own mesh (the mount is jointed, the eyecups are an item)
+EYECUPS = ['Eyecup_R', 'Eyecup_L']  # the removable eyecup pair, its own item; mesh kept in the device frame
 GLASS = ['Opacity_R', 'Opacity_L', 'Opacity_Mid', 'Opacity_Top']
 MOUNT = ['Mount_01']
 THERMAL_WINDOW = 'Opacity_Mid'
@@ -293,6 +294,7 @@ def main(parts, tex):
         for old in ('device.bin', 'mount.bin'): (out / old).unlink(missing_ok=True)
         nodes, q_on, q_off, joints, Rs, ts = rig(parts, colour, out)
         glass = write_mesh(out / 'glass.bin', *load(parts, colour, GLASS))
+        write_mesh(out / 'eyecup.bin', *load(parts, colour, EYECUPS))
         w = load(parts, colour, [THERMAL_WINDOW])[0]  # thermal window: centre of its disc; the device looks along -Y
         info = {'colour': colour.lower(), 'thermalLens': ((w.min(0) + w.max(0)) / 2).tolist(),
                 'onRotation': list(map(float, q_on)), 'offRotation': list(map(float, q_off)), 'nodes': nodes}
