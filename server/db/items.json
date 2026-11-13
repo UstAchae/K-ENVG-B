@@ -1,0 +1,49 @@
+{
+ "clone": "5c0558060db834001b735271",
+ "handbookParentId": "5b5f749986f774094242f199",
+ "price": 185000,
+ "items": [
+  {
+   "id": "6a3e9e4b0000000000000001",
+   "name": "nvg_envgb_psq42_black",
+   "bundle": "ustachae_envgb/envgb_black.bundle",
+   "assortId": "6a3e9e4b0000000000000101",
+   "locales": {
+    "en": {
+     "name": "L3Harris AN/PSQ-42 ENVG-B night vision goggles (Black)",
+     "shortName": "ENVG-B",
+     "description": "Enhanced Night Vision Goggle - Binocular. Two white phosphor image intensifier tubes with an uncooled thermal camera between them. The thermal picture is laid over the night vision image, either as outlines of warm objects or as a fused white hot or black hot picture. Switch modes with the left and right arrow keys while the goggles are down."
+    },
+    "ch": {
+     "name": "L3Harris AN/PSQ-42 ENVG-B 夜视仪（黑色）",
+     "shortName": "ENVG-B",
+     "description": "增强型双目夜视仪（ENVG-B）。两支白磷像增强管，中间是一台非制冷热像仪。热像画面叠加在夜视画面上：可以只勾出发热物体的轮廓，也可以融合成白热或黑热画面。放下夜视仪后用左右方向键切换模式。"
+    }
+   }
+  },
+  {
+   "id": "6a3e9e4b0000000000000002",
+   "name": "nvg_envgb_psq42_tan",
+   "bundle": "ustachae_envgb/envgb_tan.bundle",
+   "assortId": "6a3e9e4b0000000000000102",
+   "locales": {
+    "en": {
+     "name": "L3Harris AN/PSQ-42 ENVG-B night vision goggles (Tan)",
+     "shortName": "ENVG-B",
+     "description": "Enhanced Night Vision Goggle - Binocular. Two white phosphor image intensifier tubes with an uncooled thermal camera between them. The thermal picture is laid over the night vision image, either as outlines of warm objects or as a fused white hot or black hot picture. Switch modes with the left and right arrow keys while the goggles are down."
+    },
+    "ch": {
+     "name": "L3Harris AN/PSQ-42 ENVG-B 夜视仪（沙色）",
+     "shortName": "ENVG-B",
+     "description": "增强型双目夜视仪（ENVG-B）。两支白磷像增强管，中间是一台非制冷热像仪。热像画面叠加在夜视画面上：可以只勾出发热物体的轮廓，也可以融合成白热或黑热画面。放下夜视仪后用左右方向键切换模式。"
+    }
+   }
+  }
+ ],
+ "listing": {
+  "traderId": "5935c25fb3acc3127c3d8cd9",
+  "currency": "5696686a4bdc2da3298b456a",
+  "price": 1890,
+  "loyalty": 4
+ }
+}

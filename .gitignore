@@ -37,3 +37,5 @@ item/Unity/Assets/Source.meta
 item/Unity/Assets/Generated/
 item/Unity/Assets/Generated.meta
 item/built/
+server/bundles/
+__pycache__/

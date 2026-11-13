@@ -1,0 +1,18 @@
+{
+  "manifest": [
+    {
+      "key": "ustachae_envgb/envgb_black.bundle",
+      "dependencyKeys": [
+        "shaders",
+        "cubemaps"
+      ]
+    },
+    {
+      "key": "ustachae_envgb/envgb_tan.bundle",
+      "dependencyKeys": [
+        "shaders",
+        "cubemaps"
+      ]
+    }
+  ]
+}
