@@ -69,7 +69,7 @@ internal static class EnvgHud
             }
             _font = best;
             EnvgFusionPlugin.Log?.LogInfo(_font != null
-                ? "ENVG symbology font: " + _font.name + " (" + bestScore / 10 + " of " + Chars.Length + " glyphs)"
+                ? "ENVG symbology font: " + _font.name + " (" + bestScore / 10 + " of " + Chars.Length + " glyphs, padding " + _font.atlasPadding + ", " + _font.atlasRenderMode + ", point size " + _font.faceInfo.pointSize + ")"
                 : "ENVG symbology: no TextMeshPro font found, no symbology");
         }
         catch (System.Exception e)
@@ -280,10 +280,10 @@ internal static class EnvgHud
     {
         float ex = hx + glow, ey = hy + glow;
         int b = _pos.Count;
-        _pos.Add(new Vector3(cx - ex, cy - ey, 1f)); _uv.Add(new Vector2(-ex, -ey)); _aux.Add(new Vector2(hx, hy));
-        _pos.Add(new Vector3(cx - ex, cy + ey, 1f)); _uv.Add(new Vector2(-ex, ey)); _aux.Add(new Vector2(hx, hy));
-        _pos.Add(new Vector3(cx + ex, cy + ey, 1f)); _uv.Add(new Vector2(ex, ey)); _aux.Add(new Vector2(hx, hy));
-        _pos.Add(new Vector3(cx + ex, cy - ey, 1f)); _uv.Add(new Vector2(ex, -ey)); _aux.Add(new Vector2(hx, hy));
+        _pos.Add(new Vector3(cx - ex, cy - ey, 1f + glow)); _uv.Add(new Vector2(-ex, -ey)); _aux.Add(new Vector2(hx, hy));
+        _pos.Add(new Vector3(cx - ex, cy + ey, 1f + glow)); _uv.Add(new Vector2(-ex, ey)); _aux.Add(new Vector2(hx, hy));
+        _pos.Add(new Vector3(cx + ex, cy + ey, 1f + glow)); _uv.Add(new Vector2(ex, ey)); _aux.Add(new Vector2(hx, hy));
+        _pos.Add(new Vector3(cx + ex, cy - ey, 1f + glow)); _uv.Add(new Vector2(ex, -ey)); _aux.Add(new Vector2(hx, hy));
         _tris.Add(b); _tris.Add(b + 1); _tris.Add(b + 2); _tris.Add(b); _tris.Add(b + 2); _tris.Add(b + 3);
     }
 

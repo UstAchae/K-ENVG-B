@@ -1506,16 +1506,23 @@ Shader "Justachae/ENVG/Outline"
             }
             float4 fragHud(hudV i) : SV_Target
             {
-                float sd;   // signed distance to the shape's edge, in screen pixels, positive inside
+                float sd;     // signed distance to the shape's edge, in screen pixels, positive inside
+                float reach;  // how far out the quad reaches (the glow must be gone there, or the quad shows as a tile)
                 if (i.kind < 0.5)
+                {
                     sd = (tex2D(_EnvgHudFont, i.uv).a - 0.5) * _EnvgHudSdf.x * i.aux.x;
+                    reach = 0.5 * _EnvgHudSdf.x * i.aux.x;   // the atlas's distance runs out at its padding
+                }
                 else
                 {
                     float2 q = abs(i.uv) - i.aux;
                     sd = -(length(max(q, 0.0)) + min(max(q.x, q.y), 0.0));
+                    reach = i.kind - 1.0;
                 }
                 float core = saturate(sd + 0.5);
-                float glow = exp(-max(-sd, 0.0) / max(_EnvgHudCore.w, 0.5)) * (1.0 - core) * _EnvgHudGlow.a;
+                float beyond = saturate(-sd / max(reach, 0.5));
+                float fall = exp(-max(-sd, 0.0) / max(_EnvgHudCore.w, 0.5)) * (1.0 - beyond) * (1.0 - beyond);
+                float glow = fall * (1.0 - core) * _EnvgHudGlow.a;
                 return float4(_EnvgHudCore.rgb * core + _EnvgHudGlow.rgb * glow, 1);
             }
             ENDCG
