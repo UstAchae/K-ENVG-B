@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.50.6";
+    public const string Version = "0.51.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -785,8 +785,10 @@ internal static class EnvgFusion
         Material.SetVector(FieldId, new Vector4(0.68f * radius * share / aspect, 0.52f * radius * share, 4f / Mathf.Max(dest.height, 1), share > 0f ? 1f : 0f));
         float settled = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.85f, 1f, EyepieceLink.Deployed));
         Material.SetVector(FieldAtId, new Vector4(at.x, at.y, settled, 1f));
+        // the real device lays the thermal picture into the right eye only, whose tube sits right of the thermal
+        // lens (ENVG-B: lens x 0.0023, right eyepiece x 0.0308 in the model): so against that eye the lens is up and left
         float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
-        Material.SetVector(ParallaxId, new Vector4(lens, 0.5f / Mathf.Max(_tan.y, 1e-4f), 0f, 0f));
+        Material.SetVector(ParallaxId, new Vector4(lens, 0.5f / Mathf.Max(_tan.y, 1e-4f), LensLeftOfRightEye, 0.5f / Mathf.Max(_tan.x, 1e-4f)));
         int pass = show == EnvgFusionPlugin.ShowThermal ? 15 : show == EnvgFusionPlugin.ShowGeometry ? 17 : show == EnvgFusionPlugin.ShowNormals ? 4
             : show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
         Material.SetVector(FusionId, new Vector4(show == EnvgFusionPlugin.ShowBlackHot ? -1f : 1f, 0.85f, 0f, 0f));
@@ -810,6 +812,7 @@ internal static class EnvgFusion
         return true;
     }
     private static CommandBuffer? _fuseDraw;
+    private const float LensLeftOfRightEye = -0.0285f;
     private static bool _loggedFuse;
 
     internal static bool TubesWanted => Active && EnvgFusionPlugin.WhitePhosphor?.Value == true;

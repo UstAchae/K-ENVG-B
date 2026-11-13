@@ -166,7 +166,8 @@ Shader "Justachae/ENVG/Outline"
 
     sampler2D _EnvgScene;     // the tube's picture the game's SSAA draws, read through the same full-screen mesh (so at i.uv)
     float4 _EnvgWashout;      // x: strength (0 off)
-    float4 _EnvgParallax;     // x: the thermal lens above the tubes (m), y: uv per unit of slope (1 / (2 tan(half vertical field)))
+    float4 _EnvgParallax;     // x: the thermal lens above the eye's tube (m), y: uv per unit of vertical slope (1 / (2 tan(half
+                              // vertical field))), z: the lens to the right of it (m, negative left), w: the same per horizontal slope
     float4 _EnvgField;        // xy: the thermal picture's half size (uv), z: its soft edge (uv of height), w: 1 on
 
     sampler2D _EnvgDepth;     // linear depth (m) of the scene, as the thermal picture
@@ -176,13 +177,14 @@ Shader "Justachae/ENVG/Outline"
     // what the thermal lens sees there: the scene that far above it.
     float2 thermalUv(float2 uv)
     {
-        if (_EnvgParallax.x <= 0.0)
+        if (_EnvgParallax.x <= 0.0 && _EnvgParallax.z == 0.0)
             return uv;
+        // seen from the lens, a thing at distance d sits off by the lens's offset over d against the tube's view
+        float2 slope = float2(_EnvgParallax.z * _EnvgParallax.w, _EnvgParallax.x * _EnvgParallax.y);
         float d = tex2Dlod(_EnvgDepth, float4(uv, 0, 0)).r;
-        float dy = _EnvgParallax.x / max(d, 0.25) * _EnvgParallax.y;
-        d = tex2Dlod(_EnvgDepth, float4(uv + float2(0, dy), 0, 0)).r;
-        dy = _EnvgParallax.x / max(d, 0.25) * _EnvgParallax.y;
-        return uv + float2(0, dy);
+        float2 s = slope / max(d, 0.25);
+        d = tex2Dlod(_EnvgDepth, float4(uv + s, 0, 0)).r;
+        return uv + slope / max(d, 0.25);
     }
 
     // the thermal picture is a rectangle (4:3) within the tubes' round field: outside it, the tubes' picture alone
