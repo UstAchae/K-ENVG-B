@@ -13,6 +13,20 @@
         "shaders",
         "cubemaps"
       ]
+    },
+    {
+      "key": "ustachae_envgb/envgb_eyecup_black.bundle",
+      "dependencyKeys": [
+        "shaders",
+        "cubemaps"
+      ]
+    },
+    {
+      "key": "ustachae_envgb/envgb_eyecup_tan.bundle",
+      "dependencyKeys": [
+        "shaders",
+        "cubemaps"
+      ]
     }
   ]
 }
