@@ -1406,5 +1406,64 @@ Shader "Justachae/ENVG/Outline"
             }
             ENDCG
         }
+
+        // 33: a wide gaussian along one axis in one pass, the same as pass 2 run several times over (its sigma the
+        // root of their squared sum): every texel within three sigma, two at a time through the texture's bilinear
+        // filter (taps a pixel apart, so no comb). One read and one write of the picture instead of one per narrow pass.
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragWide
+            #pragma target 3.0
+            float4 _EnvgWide;    // x: sigma (texels), y: radius (texels), zw: one texel along the axis (uv)
+            float4 fragWide(v2f i) : SV_Target
+            {
+                float k = -0.5 / max(_EnvgWide.x * _EnvgWide.x, 1e-4);
+                float4 s = tex2D(_MainTex, i.uv);
+                float total = 1.0;
+                int r = (int)_EnvgWide.y;
+                [loop] for (int n = 1; n <= r; n += 2)
+                {
+                    float wa = exp(k * n * n), wb = exp(k * (n + 1) * (n + 1));
+                    float w = wa + wb;
+                    float2 o = _EnvgWide.zw * ((n * wa + (n + 1) * wb) / w);
+                    s += (tex2D(_MainTex, i.uv + o) + tex2D(_MainTex, i.uv - o)) * w;
+                    total += 2.0 * w;
+                }
+                return s / total;
+            }
+            ENDCG
+        }
+
+        // 34: the same over one surface only (as pass 29): taps at a clearly different distance don't count
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragWideDepth
+            #pragma target 3.0
+            float4 _EnvgWide;
+            float4 fragWideDepth(v2f i) : SV_Target
+            {
+                float k = -0.5 / max(_EnvgWide.x * _EnvgWide.x, 1e-4);
+                float d0 = tex2D(_EnvgDepth, i.uv).r;
+                float tol = 0.04 * d0 + 0.05;
+                float4 s = tex2D(_MainTex, i.uv);
+                float total = 1.0;
+                int r = (int)_EnvgWide.y;
+                [loop] for (int n = 1; n <= r; n++)
+                {
+                    float w = exp(k * n * n);
+                    float2 o = _EnvgWide.zw * n;
+                    float a = w * saturate(1.0 - abs(tex2D(_EnvgDepth, i.uv + o).r - d0) / tol);
+                    float b = w * saturate(1.0 - abs(tex2D(_EnvgDepth, i.uv - o).r - d0) / tol);
+                    s += tex2D(_MainTex, i.uv + o) * a + tex2D(_MainTex, i.uv - o) * b;
+                    total += a + b;
+                }
+                return s / total;
+            }
+            ENDCG
+        }
     }
 }

@@ -392,9 +392,19 @@ internal static class EnvgChain
 
     // A gaussian of the given step (sigma about two steps). A wide one is made of several narrow ones (their variances
     // add): taps more than a pixel and a half apart left copies of every edge (a comb) instead of a smooth blur.
+    private static readonly int WideId = Shader.PropertyToID("_EnvgWide");
     internal static void Blur(CommandBuffer cb, Material m, RenderTexture from, RenderTexture to, float step, int width, int height, RenderTexture across, bool sameSurface = false)
     {
         int passes = Mathf.Clamp(Mathf.CeilToInt(step * step / 2.25f), 1, 8);
+        if (passes > 1)
+        {
+            // as wide as those passes together (sigma 1.69 steps of each, added in squares: 1.69 x the step), in one
+            cb.SetGlobalVector(WideId, new Vector4(1.69f * step, Mathf.Ceil(3f * 1.69f * step), 1f / width, 0f));
+            cb.Blit(from, across, m, sameSurface ? 34 : 33);
+            cb.SetGlobalVector(WideId, new Vector4(1.69f * step, Mathf.Ceil(3f * 1.69f * step), 0f, 1f / height));
+            cb.Blit(across, to, m, sameSurface ? 34 : 33);
+            return;
+        }
         float each = step / Mathf.Sqrt(passes);
         int pass = sameSurface ? 29 : 2;
         RenderTexture source = from;
