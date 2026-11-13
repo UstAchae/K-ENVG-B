@@ -206,44 +206,8 @@ internal static class EnvgChain
         material.SetVector(LookId, new Vector4(t.LineBase, t.LineHot, t.LineHotAbove, 0f));
     }
 
-    // For measuring (the mod's timing, temporary): the chain split into named groups, each its own command buffer,
-    // executed in order instead of the one buffer, so each can be run again on its own.
-    internal static System.Func<bool>? SplitWanted;
-    internal static System.Action<CommandBuffer, string, bool>? Bracket;
-    internal static readonly System.Collections.Generic.List<string> GroupNames = new System.Collections.Generic.List<string>();
-    private static readonly System.Collections.Generic.List<CommandBuffer> _groups = new System.Collections.Generic.List<CommandBuffer>();
-    internal static int GroupCount;
-    internal static CommandBuffer GroupBuffer(int i) => _groups[i];
-    private static CommandBuffer Group(CommandBuffer cb, string name)
-    {
-        if (SplitWanted == null || !SplitWanted())
-            return cb;
-        if (GroupCount > 0)
-            Bracket?.Invoke(_groups[GroupCount - 1], GroupNames[GroupCount - 1], false);
-        if (_groups.Count <= GroupCount)
-            _groups.Add(new CommandBuffer { name = "Justachae ENVG " + name });
-        CommandBuffer g = _groups[GroupCount];
-        g.Clear();
-        if (GroupNames.Count <= GroupCount) GroupNames.Add(name); else GroupNames[GroupCount] = name;
-        Bracket?.Invoke(g, name, true);
-        GroupCount++;
-        return g;
-    }
-
-    internal static int Created;
     internal static void Fill(CommandBuffer cb, Material m, EnvgChainInput t)
     {
-        GroupCount = 0;
-        FillGroups(cb, m, t);
-        if (GroupCount > 0)
-            Bracket?.Invoke(_groups[GroupCount - 1], GroupNames[GroupCount - 1], false);
-        if (GroupNames.Count > GroupCount)
-            GroupNames.RemoveRange(GroupCount, GroupNames.Count - GroupCount);
-    }
-
-    private static void FillGroups(CommandBuffer cb, Material m, EnvgChainInput t)
-    {
-        cb = Group(cb, "geometry (normals, depth, blurs)");
         int fineWidth = t.Width * t.Oversample, fineHeight = t.Height * t.Oversample;
         // our own long-wave picture from the deferred buffers: the lit picture, diffuse and specular colour, normals, depth
         cb.SetGlobalTexture(NormalsId, t.Normals);
@@ -287,13 +251,11 @@ internal static class EnvgChain
         }
         else
             cb.SetGlobalTexture(NormalsSoftId, t.GeoFar);
-        cb = Group(cb, "light and colour averaged");
         // the light absorbed is averaged over a few pixels (heat spreads sideways in a wall): no pattern of paint shows
         Blur(cb, m, t.Picture!, t.LitSoft!, 3f, fineWidth, fineHeight, t.Across!, true);
         cb.SetGlobalTexture(LitSoftId, t.LitSoft);
         Blur(cb, m, t.Albedo!, t.AlbedoSoft!, 5f * t.Oversample, fineWidth, fineHeight, t.Across!, true);
         cb.SetGlobalTexture(AlbedoSoftId, t.AlbedoSoft);
-        cb = Group(cb, "foliage");
         // foliage: where rough surfaces crowd (a crown, a bush), over about five pixels
         if (t.Foliage != null)
         {
@@ -309,12 +271,10 @@ internal static class EnvgChain
             Blur(cb, m, _foliageWide!, _foliageWide!, 3f, qw, qh, _foliageWideAcross!);
             cb.SetGlobalTexture(FoliageWideId, _foliageWide);
         }
-        cb = Group(cb, "temperature + seams");
         cb.Blit(t.Picture, t.Heat2x, m, 14);
         // seams between meshes that see no surface are filled from the surfaces around; the geometric edges into g
         cb.Blit(t.Heat2x, t.Seams, m, 16);
         cb.Blit(t.Seams, t.HistoryB);
-        cb = Group(cb, "fusion base + histogram copy");
         // the base layer for the fused display: the heat averaged over one surface (about three pixels), into alpha
         if (t.HeatBase != null)
         {
@@ -326,7 +286,6 @@ internal static class EnvgChain
         }
         // the gain control: the picture's mean and spread over the surfaces only (the cold sky would set the scale and
         // flatten everything on the ground), followed over a second
-        cb = Group(cb, "gain control");
         RenderTexture agcCoarse = Ensure(ref _agcCoarse, 32, 18, RenderTextureFormat.ARGBFloat, "Justachae ENVG AGC 32");
         RenderTexture agcMean = Ensure(ref _agcMean, 1, 1, RenderTextureFormat.RGFloat, "Justachae ENVG AGC");
         bool agcFresh = _agcA == null;
@@ -343,12 +302,10 @@ internal static class EnvgChain
         cb.SetGlobalTexture(AgcId, _agcB);
         // the lens's blur (radius in detector pixels, at least half of one) is the filter's centre; the surround is the
         // same at twice the radius
-        cb = Group(cb, "DoG blurs");
         float centre = Mathf.Max(t.Smoothing, 0.5f) * t.Oversample;
         Blur(cb, m, t.HistoryB!, t.Blurred!, centre * 0.5f, fineWidth, fineHeight, t.Across!);
         Blur(cb, m, t.Blurred!, t.Surround!, centre * 1.7320508f * 0.5f, fineWidth, fineHeight, t.Across!);
         cb.SetGlobalTexture(SurroundId, t.Surround);
-        cb = Group(cb, "local contrast");
         // the heat's local mean and mean square (about twelve processing pixels) for local contrast
         cb.Blit(t.HistoryB, t.LocalSquare, m, 20);
         Blur(cb, m, t.LocalSquare!, t.LocalMoments!, 6f * t.Oversample, fineWidth, fineHeight, t.Across!);
@@ -358,11 +315,9 @@ internal static class EnvgChain
         cb.SetGlobalVector(GainLimitId, new Vector4(Mathf.Max(t.MinSpread, 0.05f) / 100f, 0f, 0f, 0f));
         cb.SetGlobalVector(FoliageStepId, new Vector4(t.FoliageStepLo, t.FoliageStepHi, 0f, 0f));
         cb.SetGlobalVector(MixId, new Vector4(t.HeatEdges, t.GeometryEdges, t.LocalContrast, t.ShapeNeedsHeat));
-        cb = Group(cb, "edges");
         cb.Blit(t.Blurred, t.Edges, m, 11);
         // like the game's TAA: last frame's edge strength, brought to where things are now by the game's motion vectors
         // and held within this frame's neighbourhood, blended in before the threshold
-        cb = Group(cb, "temporal smoothing");
         RenderTexture followed = t.Edges!;
         if (t.FromMain && t.MotionReady && t.Temporal > 0f && t.Motion != null && t.EdgeHistA != null && t.EdgeHistB != null)
         {
@@ -378,7 +333,6 @@ internal static class EnvgChain
         }
         else
             _edgeHistoryValid = false;
-        cb = Group(cb, "ridge, density, glow");
         // each edge's centre line (one pixel wide, along the response's ridge), through the threshold
         cb.Blit(followed, t.Ridge, m, 26);
         // how crowded the lines are around each point, and their glow
@@ -424,7 +378,6 @@ internal static class EnvgChain
         {
             Free(ref texture);
             texture = new RenderTexture(width, height, 0, format) { name = name, filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
-            Created++;
             texture.Create();
         }
         return texture;

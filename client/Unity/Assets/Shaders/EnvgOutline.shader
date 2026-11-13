@@ -1479,5 +1479,46 @@ Shader "Justachae/ENVG/Outline"
             }
             ENDCG
         }
+
+        // 35: the symbology (EnvgHud): light added to the eyepiece's picture, as the overlay display adds it. Glyphs
+        // from a TextMeshPro distance atlas (kind 0) and solid bars (kind 1, their distance worked out here); a
+        // near-white core and a cyan glow falling off over a few pixels outside it.
+        Pass
+        {
+            Blend One One
+            CGPROGRAM
+            #pragma vertex vertHud
+            #pragma fragment fragHud
+            sampler2D _EnvgHudFont;
+            float4 _EnvgHudSdf;    // x: atlas texels of distance per unit of alpha
+            float4 _EnvgHudCore;   // rgb: the core's colour, w: the glow's width (pixels)
+            float4 _EnvgHudGlow;   // rgb: the glow's colour, a: its strength
+            struct hudIn { float4 vertex : POSITION; float2 uv : TEXCOORD0; float2 aux : TEXCOORD1; };
+            struct hudV { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; float2 aux : TEXCOORD1; float kind : TEXCOORD2; };
+            hudV vertHud(hudIn v)
+            {
+                hudV o;
+                o.pos = float4(v.vertex.xy, 0, 1);
+                o.uv = v.uv;
+                o.aux = v.aux;
+                o.kind = v.vertex.z;
+                return o;
+            }
+            float4 fragHud(hudV i) : SV_Target
+            {
+                float sd;   // signed distance to the shape's edge, in screen pixels, positive inside
+                if (i.kind < 0.5)
+                    sd = (tex2D(_EnvgHudFont, i.uv).a - 0.5) * _EnvgHudSdf.x * i.aux.x;
+                else
+                {
+                    float2 q = abs(i.uv) - i.aux;
+                    sd = -(length(max(q, 0.0)) + min(max(q.x, q.y), 0.0));
+                }
+                float core = saturate(sd + 0.5);
+                float glow = exp(-max(-sd, 0.0) / max(_EnvgHudCore.w, 0.5)) * (1.0 - core) * _EnvgHudGlow.a;
+                return float4(_EnvgHudCore.rgb * core + _EnvgHudGlow.rgb * glow, 1);
+            }
+            ENDCG
+        }
     }
 }

@@ -24,12 +24,12 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.53.1";
+    public const string Version = "0.54.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
     internal static ManualLogSource? Log;
-    internal static ConfigEntry<bool>? On, WhitePhosphor, DumpBuffers;
+    internal static ConfigEntry<bool>? On, WhitePhosphor, DumpBuffers, Symbology;
     internal static ConfigEntry<float>? GrassAmount, ThermalField, Latency, MinSpread, GroundPatches, BodyHeat, ShapeNeedsHeat, Washout, Temporal, LineWidth, Brightness, Amount, TubeBrightness, Softness, Glow, Smoothing, LensOffset, AirTemperature, LightHeating, SkyCooling, I2Noise, HeatEdges, GeometryEdges, ResidualHeat, Declutter, LocalContrast;
     internal static ConfigEntry<float>? SensorResolution;
     internal static ConfigEntry<int>? RenderScale;
@@ -67,6 +67,8 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("轮廓线有多亮。", new AcceptableValueRange<float>(0f, 4f), new ConfigurationManagerAttributes { Order = 8 }));
         Amount = Config.Bind(Section, "轮廓多少", 1f,
             new ConfigDescription("画多少线：越大，越弱的边缘也画出来（更多细纹）；越小，只剩明显的轮廓。", new AcceptableValueRange<float>(0f, 1f), new ConfigurationManagerAttributes { Order = 7 }));
+        Symbology = Config.Bind(Section, "目镜显示信息", true,
+            new ConfigDescription("目镜热像框里的设备信息（青色发光）：坐标、测距、方位刻度、时间（Zulu）、电池、显示模式。只在 K-3PS-C 目镜显示 ENVG-B 时出现。", null, new ConfigurationManagerAttributes { Order = 5 }));
         WhitePhosphor = Config.Bind(Section, "白磷夜视", true,
             new ConfigDescription("夜视画面换成白磷管（蓝白色）。戴着游戏里的夜视仪并打开时，用那台夜视仪自己的画面。", null, new ConfigurationManagerAttributes { Order = 6 }));
         TubeBrightness = Config.Bind(Section, "夜视亮度", 1f,
@@ -146,8 +148,6 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             Log.LogWarning("Patching the grass draw failed; no grass in the thermal picture: " + e.Message);
         }
         EyecupSlotIcon.Patch(harmony);
-        EnvgChain.SplitWanted = () => EnvgTiming.Splitting;
-        EnvgChain.Bracket = EnvgTiming.Bracket;
         MethodInfo? nvPreCull = AccessTools.Method(typeof(BSG.CameraEffects.NightVision), "OnPreCull");
         if (nvPreCull != null)
             harmony.Patch(nvPreCull, postfix: new HarmonyMethod(typeof(EnvgFusion), nameof(EnvgFusion.AfterNightVisionPreCull)));
@@ -169,10 +169,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
                 EnvgFusion.ModeChanged();
             }
         }
-        long t0 = EnvgTiming.Begin(out long b0);
         EnvgFusion.Update();
-        EnvgTiming.End("Update", t0, b0);
-        EnvgTiming.Tick();
     }
 
     // the mode's name, briefly, at the top of the screen
@@ -713,12 +710,6 @@ internal static class EnvgFusion
     // edges are added right as it finishes, onto the same output.
     internal static void AfterFinalImage(SSAAImpl __instance, RenderTexture destination)
     {
-        long t0 = EnvgTiming.Begin(out long b0);
-        AfterFinalImageInner(__instance, destination);
-        EnvgTiming.End("SSAAImpl postfix", t0, b0);
-    }
-    private static void AfterFinalImageInner(SSAAImpl __instance, RenderTexture destination)
-    {
         if (!Active || _main == null || __instance == null || __instance.gameObject != _main.gameObject
             || _overlayDraw == null || Material == null || Edges == null || Picture == null)
             return;
@@ -736,7 +727,7 @@ internal static class EnvgFusion
             }
             if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2)
                 return;
-            ExecuteChain();
+            Graphics.ExecuteCommandBuffer(_overlayDraw);
             RequestHistogram();
             if (EnvgFusionPlugin.DumpBuffers != null && EnvgFusionPlugin.DumpBuffers.Value)
             {
@@ -778,7 +769,6 @@ internal static class EnvgFusion
             Material.SetVector(ScreenTexelId, new Vector4(1f / Mathf.Max(width, 1), 1f / Mathf.Max(height, 1), EnvgFusionPlugin.LineWidth?.Value ?? 1.5f, 0f));
             _screenDraw.DrawMesh(mesh, Matrix4x4.identity, Material, 0, pass);
             Graphics.ExecuteCommandBuffer(_screenDraw);
-            EnvgTiming.Shown();
             if (!_loggedOverlay)
             {
                 _loggedOverlay = true;
@@ -801,23 +791,18 @@ internal static class EnvgFusion
     private static readonly int FieldAtId = Shader.PropertyToID("_EnvgFieldAt");
     internal static bool FuseInto(RenderTexture i2, RenderTexture dest)
     {
-        long t0 = EnvgTiming.Begin(out long b0);
-        bool wrote = FuseIntoInner(i2, dest);
-        EnvgTiming.End("Fuse", t0, b0);
-        return wrote;
-    }
-    private static bool FuseIntoInner(RenderTexture i2, RenderTexture dest)
-    {
+        if (Active && _main != null && Material != null && EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2)
+            return SymbologyOnly(i2, dest);
         if (!Active || _main == null || _overlayDraw == null || Material == null || Edges == null || Picture == null || Ridge == null)
             return false;
         string show = EnvgFusionPlugin.Show?.Value ?? EnvgFusionPlugin.ShowOutline;
         if (show == EnvgFusionPlugin.ShowI2)
-            return false;
+            return SymbologyOnly(i2, dest);
         if (_fusedFrame != Time.frameCount)
         {
             // the chain and the latency ring move on once a frame, however many times the eyepieces ask
             _fusedFrame = Time.frameCount;
-            ExecuteChain();
+            Graphics.ExecuteCommandBuffer(_overlayDraw);
             RequestHistogram();
             DelayThermal(show);
         }
@@ -863,11 +848,8 @@ internal static class EnvgFusion
         _fuseDraw.SetRenderTarget(dest);
         _fuseDraw.SetViewport(new Rect(0f, 0f, dest.width, dest.height));
         _fuseDraw.DrawMesh(_fuseQuad, Matrix4x4.identity, Material, 0, pass);
+        Symbology(_fuseDraw, dest, at, show, settled);
         Graphics.ExecuteCommandBuffer(_fuseDraw);
-        EnvgTiming.Shown();
-        if (EnvgTiming.Current == EnvgTiming.FuseItem)
-            for (int k = 0; k < EnvgTiming.Extra; k++)
-                Graphics.ExecuteCommandBuffer(_fuseDraw);
         EnvgPlaceLog.AfterFuse(i2, dest, at, Material.GetVector(FieldId));
         // the screen's own draw keeps the field at the centre
         Material.SetVector(FieldAtId, Vector4.zero);
@@ -881,48 +863,36 @@ internal static class EnvgFusion
     }
     private static CommandBuffer? _fuseDraw;
 
-    // the chain: one buffer, or (while timing) its groups in order, the group being measured run again
-    private static void ExecuteChain()
+    // the device's symbology in the thermal rectangle (where the eyepieces' field puts it), as bright as the picture
+    // has faded in
+    private static void Symbology(CommandBuffer cb, RenderTexture dest, Vector4 at, string show, float settled)
     {
-        if (EnvgChain.GroupCount == 0)
-        {
-            Graphics.ExecuteCommandBuffer(_overlayDraw!);
+        if (EnvgFusionPlugin.Symbology?.Value != true || _main == null || Material == null)
             return;
-        }
-        string? measured = EnvgTiming.Current;
-        for (int i = 0; i < EnvgChain.GroupCount; i++)
-        {
-            CommandBuffer g = EnvgChain.GroupBuffer(i);
-            Graphics.ExecuteCommandBuffer(g);
-            if (measured != null && measured == EnvgChain.GroupNames[i])
-                for (int k = 0; k < EnvgTiming.Extra; k++)
-                    Graphics.ExecuteCommandBuffer(g);
-        }
+        float radius = Mathf.Max(at.z, 1e-3f), aspect = Mathf.Max(at.w, 1e-3f);
+        var centre = new Vector2(at.x * dest.width, at.y * dest.height);
+        var half = new Vector2(0.68f * radius / aspect * dest.width, 0.52f * radius * dest.height);
+        EnvgHud.Draw(cb, Material, _main, dest, centre, half, new Vector2(at.x, at.y), show, settled);
     }
 
-    // (timing) one of the main camera's buffers added again so many times, or back to once
-    internal static void RepeatCameraBuffer(string item, int extra)
+    // the plain tubes' mode: no thermal picture, the symbology alone over the tube's
+    private static bool SymbologyOnly(RenderTexture i2, RenderTexture dest)
     {
-        Camera? camera = item == EnvgTiming.GrassItem ? _grassMaskCamera : _mainCopyCamera;
-        CommandBuffer? cb = item == EnvgTiming.CopyItem ? _mainCopy : item == EnvgTiming.MotionItem ? _motionCopy : _grassMaskCb;
-        CameraEvent at = item == EnvgTiming.CopyItem ? CameraEvent.BeforeForwardAlpha : item == EnvgTiming.MotionItem ? CameraEvent.BeforeImageEffects : CameraEvent.AfterGBuffer;
-        if (camera == null || cb == null)
-            return;
-        camera.RemoveCommandBuffer(at, cb);
-        for (int k = 0; k <= extra; k++)
-            camera.AddCommandBuffer(at, cb);
+        if (EnvgFusionPlugin.Symbology?.Value != true || Material == null)
+            return false;
+        Vector4 at = EyepieceLink.FieldInMainUv;
+        float settled = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.85f, 1f, EyepieceLink.Deployed));
+        _fuseDraw ??= new CommandBuffer { name = "Justachae ENVG into the eyepieces" };
+        _fuseDraw.Clear();
+        _fuseDraw.Blit(i2, dest);
+        _fuseDraw.SetRenderTarget(dest);
+        _fuseDraw.SetViewport(new Rect(0f, 0f, dest.width, dest.height));
+        Symbology(_fuseDraw, dest, at, EnvgFusionPlugin.ShowI2, settled);
+        Graphics.ExecuteCommandBuffer(_fuseDraw);
+        return true;
     }
 
-    // (timing) every texture the mod keeps
-    internal static System.Collections.Generic.IEnumerable<string> TextureList()
-    {
-        foreach (FieldInfo f in typeof(EnvgFusion).GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public))
-            if (f.FieldType == typeof(RenderTexture) && f.GetValue(null) is RenderTexture rt && rt != null)
-                yield return f.Name + " " + rt.width + "x" + rt.height + " " + rt.format;
-        foreach (FieldInfo f in typeof(EnvgChain).GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public))
-            if (f.FieldType == typeof(RenderTexture) && f.GetValue(null) is RenderTexture rt && rt != null)
-                yield return "chain " + f.Name + " " + rt.width + "x" + rt.height + " " + rt.format;
-    }
+
     private const float LensLeftOfRightEye = -0.0285f;
     private static bool _loggedFuse;
 
@@ -1291,7 +1261,6 @@ internal static class EnvgFusion
         {
             Free(ref texture);
             texture = new RenderTexture(width, height, depth, format) { name = name, filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
-            EnvgTiming.PluginCreated++;
             texture.Create();
         }
         return texture;
@@ -1301,13 +1270,6 @@ internal static class EnvgFusion
     // game or other mods may still move it), ours renders the thermal picture with that very view. The main camera's
     // target and the active texture are put back after (the game's SSAA has already set its low-resolution target).
     internal static void OnPreRender(Camera camera)
-    {
-        long t0 = EnvgTiming.Begin(out long b0);
-        OnPreRenderInner(camera);
-        if (camera == _main)
-            EnvgTiming.End("main camera pre-render", t0, b0);
-    }
-    private static void OnPreRenderInner(Camera camera)
     {
         if (!Active && _mainCopy != null && camera == _mainCopyCamera)
             _mainCopy.Clear();
