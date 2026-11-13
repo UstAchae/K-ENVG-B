@@ -219,6 +219,75 @@ def islands(p):
     return np.array([find(i) for i in inv[::3]])
 
 
+# The battery pack on the back of the helmet and its cable, as the GPNVG-18 carries its own (one item, on the part
+# that does not flip). Measured from the GPNVG-18's base in the root frame (FLUX check): its pack is centred at
+# GP_PACK, its long axis X, its height GP_PACK_UP, its thickness GP_PACK_OUT (away from the helmet), 43 mm thick; its
+# cable leaves the base on the right and runs back along the helmet's right side. The ENVG-B's own box (the FBX
+# Battery's box islands, without its cable, which ran to the flipping device) takes the pack's place with the same
+# inner face; a 5 mm cable of our own follows the GPNVG-18's route from the shroud plate to the box.
+GP_PACK = np.array([0.0, 0.097, -0.26])
+GP_PACK_UP = np.array([0.0, 0.87, 0.5])
+GP_PACK_OUT = np.array([0.0, 0.5, -0.87])
+GP_PACK_THICK = 0.043
+CABLE_ROUTE = [(0.045, 0.020, -0.005), (0.093, 0.038, -0.037), (0.100, 0.060, -0.080), (0.110, 0.098, -0.140),
+               (0.108, 0.099, -0.186), (0.099, 0.079, -0.227), (0.075, 0.075, -0.250)]
+CABLE_RADIUS = 0.0025
+BATTERY_BOX = (250, 73, 32)  # vertex counts of the FBX Battery islands that make the box (the rest is its cable)
+CABLE_UV = (0.7029, 0.3021)  # the FBX cable's own texels
+
+
+def catmull(P, n=24):
+    P = np.vstack([P[0], P, P[-1]]); out = []
+    for i in range(1, len(P) - 2):
+        p0, p1, p2, p3 = P[i - 1], P[i], P[i + 1], P[i + 2]
+        for t in np.linspace(0, 1, n, endpoint=False):
+            out.append(0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t ** 3))
+    out.append(P[-2]); return np.array(out)
+
+
+def tube(path, r, sides=10):
+    """Triangle corners (positions, normals) of a tube along path, frames carried along it."""
+    T = np.gradient(path, axis=0); T /= np.linalg.norm(T, axis=1)[:, None]
+    n = np.cross(T[0], [0, 1, 0]); ring_p, ring_n = [], []
+    for i, t in enumerate(T):
+        n = n - (n @ t) * t; n /= np.linalg.norm(n); b = np.cross(t, n)
+        d = [np.cos(2 * np.pi * k / sides) * n + np.sin(2 * np.pi * k / sides) * b for k in range(sides)]
+        ring_p.append([path[i] + r * x for x in d]); ring_n.append(d)
+    P, N = [], []
+    for i in range(len(path) - 1):
+        for k in range(sides):
+            k2 = (k + 1) % sides
+            for (a, j) in ((i, k), (i, k2), (i + 1, k), (i, k2), (i + 1, k2), (i + 1, k)):  # the device's winding
+                P.append(ring_p[a][j]); N.append(ring_n[a][j])
+    return np.array(P), np.array(N)
+
+
+def battery(parts, colour, plate):
+    p, n, u = load(parts, colour, ['Battery'])
+    tl = np.repeat(islands(p), 3)
+    counts = {l: len(np.unique(p[tl == l].round(6), axis=0)) for l in np.unique(tl)}
+    keep = np.isin(tl, [l for l, k in counts.items() if k in BATTERY_BOX])
+    box, bn, bu = p[keep], n[keep], u[keep]
+    bc = (box.min(0) + box.max(0)) / 2
+    # Box frame in the device frame: width -X, height +Z, thickness +Y (outward, away from the head); a proper
+    # rotation onto the pack's frame (orthonormalised), so the box is turned, not mirrored.
+    B = np.column_stack([[-1, 0, 0], [0, 0, 1], [0, 1, 0]])
+    out_ = GP_PACK_OUT / np.linalg.norm(GP_PACK_OUT); up_ = GP_PACK_UP - (GP_PACK_UP @ out_) * out_; up_ /= np.linalg.norm(up_)
+    G = np.column_stack([np.cross(up_, out_), up_, out_])
+    R = G @ B.T
+    assert np.isclose(np.linalg.det(R), 1.0)
+    q = (box - bc) @ R.T
+    inward = (GP_PACK_THICK - np.ptp(q @ GP_PACK_OUT)) / 2
+    q = q + GP_PACK - inward * GP_PACK_OUT
+    qn = bn @ R.T
+    start = np.array([plate[:, 0].max() + 0.002, (plate[:, 1].min() + plate[:, 1].max()) / 2, 0.008])
+    end = np.array([q[:, 0].max() + 0.002, 0.092, -0.248])
+    cp, cn = tube(catmull(np.array([start, *CABLE_ROUTE, end])), CABLE_RADIUS)
+    cu = np.tile(np.array(CABLE_UV, np.float32), (len(cp), 1))
+    print(f'{colour}: battery box at {q.mean(0).round(3)}, cable {np.linalg.norm(np.diff(catmull(np.array([start, *CABLE_ROUTE, end])), axis=0), axis=1).sum():.3f} m')
+    return np.vstack([q, cp]), np.vstack([qn, cn]), np.vstack([bu, cu]).astype(np.float32)
+
+
 def rig(parts, colour, out):
     """The jointed prefab: nodes with their rest (deployed, seated) poses in the parent's frame and their meshes in
     their own frame, written for EnvgbBuilder as rig.json and <node>.bin. Returns the joint list for K-3PS-C."""
@@ -238,7 +307,8 @@ def rig(parts, colour, out):
     rail_isl = m1[0][tri_lab == [l for l, n in names.items() if n == 'rail'][0]]
     up = np.linalg.svd(rail_isl - rail_isl.mean(0))[2][0]; up = up if up[1] > 0 else -up
     # World (root-frame) rest poses: (R, t).
-    W = {'nvg_envgb_psq42_mount_LOD0': (np.eye(3), np.zeros(3)),
+    W = {'nvg_envgb_psq42_battery_LOD0': (np.eye(3), np.zeros(3)),
+         'nvg_envgb_psq42_mount_LOD0': (np.eye(3), np.zeros(3)),
          'envgb_height_screw': (frame(rod_dir, 'y'), rod.mean(0)),
          'envgb_carriage': (np.eye(3), HINGE),
          'axis': (Rdev, HINGE),
@@ -248,14 +318,15 @@ def rig(parts, colour, out):
     m5 = load(parts, colour, ['Mount_05'])[0]
     W['envgb_slide'] = (frame(RAIL, 'z'), seated((m5.min(0) + m5.max(0)) / 2))
     W['nvg_envgb_psq42_LOD0'] = (Rdev, seated(np.zeros(3)))
-    parent = {'nvg_envgb_psq42_mount_LOD0': None, 'envgb_height_screw': 'nvg_envgb_psq42_mount_LOD0',
+    parent = {'nvg_envgb_psq42_battery_LOD0': None, 'nvg_envgb_psq42_mount_LOD0': None, 'envgb_height_screw': 'nvg_envgb_psq42_mount_LOD0',
               'envgb_carriage': 'nvg_envgb_psq42_mount_LOD0', 'axis': 'envgb_carriage', 'envgb_arm': 'axis',
               'envgb_tilt': 'envgb_arm', 'envgb_bracket': 'envgb_tilt', 'envgb_slide': 'envgb_bracket',
               'nvg_envgb_psq42_LOD0': 'envgb_slide'}
     # Meshes, as root-frame points.
     def dev_parts(names):
         p, n, u = load(parts, colour, names); return seated(p), n @ Rdev.T, u
-    meshes = {'nvg_envgb_psq42_mount_LOD0': tuple(x[~screw_m] for x in m1),
+    meshes = {'nvg_envgb_psq42_battery_LOD0': battery(parts, colour, m1[0][~screw_m]),
+              'nvg_envgb_psq42_mount_LOD0': tuple(x[~screw_m] for x in m1),
               'envgb_height_screw': tuple(x[screw_m] for x in m1),
               'envgb_carriage': dev_parts(['Mount_02']), 'envgb_arm': dev_parts(['Mount_03']),
               'envgb_bracket': dev_parts(['Mount_04']), 'envgb_slide': dev_parts(['Mount_05'])}
