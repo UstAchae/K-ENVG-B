@@ -129,9 +129,19 @@ internal static class EnvgPlaceLog
         }
     }
 
-    // ---- the eyepieces: one picture of what we hand them (in a fused mode, 2 s after the first such frame) ----
+    // ---- the eyepieces: what we hand them and the screen of the same frame, 2 s after a fused mode is switched to
+    // (each switch once, at most 5 a session) ----
     private static float _fuseAt = -1f;
     private static bool _fuseDumped;
+    private static int _fuseDumps;
+    internal static void Rearm()
+    {
+        if (_fuseDumps < 5)
+        {
+            _fuseDumped = false;
+            _fuseAt = -1f;
+        }
+    }
     internal static void AfterFuse(RenderTexture i2, RenderTexture dest, Vector4 at, Vector4 field)
     {
         if (_fuseDumped)
@@ -147,6 +157,7 @@ internal static class EnvgPlaceLog
         if (Time.unscaledTime < _fuseAt)
             return;
         _fuseDumped = true;
+        _fuseDumps++;
         try
         {
             string dir = Path.Combine(Path.GetDirectoryName(typeof(EnvgPlaceLog).Assembly.Location) ?? "", "dump");
@@ -154,8 +165,10 @@ internal static class EnvgPlaceLog
             string stamp = System.DateTime.Now.ToString("HHmmss");
             Save(dest, Path.Combine(dir, "fuse-" + stamp + "-dest.png"));
             Save(i2, Path.Combine(dir, "fuse-" + stamp + "-i2.png"));
+            // the screen as this frame ends: what the eyes see, to set against dest
+            ScreenCapture.CaptureScreenshot(Path.Combine(dir, "fuse-" + stamp + "-screen.png"));
             int w = dest.width, h = dest.height;
-            EnvgFusionPlugin.Log?.LogInfo("ENVG place: eyepiece picture saved (dump/fuse-" + stamp + "-dest.png and -i2.png, " + w + "x" + h + "), FieldInMainUv "
+            EnvgFusionPlugin.Log?.LogInfo("ENVG place: eyepiece picture saved (dump/fuse-" + stamp + "-dest.png, -i2.png and -screen.png, " + show + ", " + w + "x" + h + "), FieldInMainUv "
                 + V(at) + ", _EnvgField " + V(field) + ": thermal rectangle x " + ((at.x - field.x) * w).ToString("F0") + "-" + ((at.x + field.x) * w).ToString("F0")
                 + ", y from the top " + ((1f - at.y - field.y) * h).ToString("F0") + "-" + ((1f - at.y + field.y) * h).ToString("F0")
                 + " px (" + (2f * field.x * w).ToString("F0") + "x" + (2f * field.y * h).ToString("F0") + "), screen " + Screen.width + "x" + Screen.height

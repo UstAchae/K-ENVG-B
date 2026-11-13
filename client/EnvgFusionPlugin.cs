@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.51.0";
+    public const string Version = "0.51.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -317,6 +317,7 @@ internal static class EnvgFusion
     {
         EnvgChain.ResetHistory();
         _ringFilled = 0;
+        EnvgPlaceLog.Rearm();
     }
     private static readonly int ParallaxId = Shader.PropertyToID("_EnvgParallax");
     private static readonly int FieldId = Shader.PropertyToID("_EnvgField");
