@@ -1,16 +1,17 @@
-using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Text;
 using UnityEngine;
 
 namespace EnvgFusion;
 
-// Temporary (to find why the ENVG-B floats in front of the face; remove once known): where the game actually hangs the
-// device. Logged once with the device down and once up, each 1.5 s after the state is first seen (the flip settled),
-// from the local player's own hierarchy (one walk at those two moments, nothing per frame).
+// Temporary (to find why the ENVG-B floats in front of the face, and why the thermal rectangle in the eyepieces is
+// not where it should be; remove once known). The device's place: once with the device down and once up, each 1.5 s
+// after the state is first seen, from every device in the loaded scenes (one search at each of those two moments).
+// The eyepieces: one picture of what we hand them, with the numbers it was drawn with.
 internal static class EnvgPlaceLog
 {
-    private const string Envgb = "nvg_envgb_psq42_", Gpnvg = "nvg_l3_gpnvg-18_anvis";
+    private static readonly string[] Prefixes = { "nvg_envgb_psq42_", "nvg_l3_gpnvg-18_anvis" };
     private static bool _loggedDown, _loggedUp;
     private static float _at = -1f;
     private static bool _pendingDown;
@@ -40,70 +41,80 @@ internal static class EnvgPlaceLog
         }
     }
 
-    private static void Write(EFT.Player player, bool down)
+    private static bool Named(Transform t)
     {
-        Transform[] all = ((Component)player).transform.GetComponentsInChildren<Transform>(true);
-        Transform? head = null;
-        var roots = new List<Transform>();
-        foreach (Transform t in all)
-        {
-            if (head == null && t.name == "Base HumanHead")
-                head = t;
-            bool envgb = t.name.StartsWith(Envgb), gpnvg = t.name.StartsWith(Gpnvg);
-            if ((envgb || gpnvg) && (t.parent == null || !(t.parent.name.StartsWith(Envgb) || t.parent.name.StartsWith(Gpnvg))))
-                roots.Add(t);
-        }
-        var sb = new StringBuilder();
-        sb.Append("ENVG place: device ").Append(down ? "DOWN" : "UP").Append(", player ").Append(player.name)
-          .Append(", ").Append(roots.Count).Append(" device root(s), head bone ").Append(head != null ? P(head.position) : "not found");
-        EnvgFusionPlugin.Log?.LogInfo(sb.ToString());
-        int n = 0;
-        foreach (Transform root in roots)
-        {
-            n++;
-            sb.Length = 0;
-            sb.Append("ENVG place: [").Append(n).Append("] ").Append(root.name).Append(" (active ").Append(root.gameObject.activeInHierarchy).Append(")\n  chain: ");
-            Transform? helmet = null;
-            for (Transform? p = root; p != null; p = p.parent)
-            {
-                sb.Append(p.name);
-                if (p.parent != null) sb.Append(" <- ");
-                if (helmet == null && p != root && p.name.ToLowerInvariant().Contains("helmet"))
-                    helmet = p;
-            }
-            Transform? parent = root.parent;
-            sb.Append("\n  root local to parent ").Append(parent != null ? parent.name : "-").Append(": pos ").Append(P(root.localPosition))
-              .Append(" rot ").Append(Q(root.localRotation));
-            sb.Append("\n  helmet root: ").Append(helmet != null ? helmet.name : "none named *helmet* in the chain");
-            Line(sb, "root", root, null, helmet, head);
-            Transform? axis = Find(root, "axis");
-            Line(sb, "axis", axis, null, helmet, head);
-            if (axis != null)
-                sb.Append("\n  axis localRotation ").Append(Q(axis.localRotation)).Append(" localEuler ").Append(P(axis.localEulerAngles));
-            foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
-            {
-                string lower = t.name.ToLowerInvariant();
-                if (lower.EndsWith("_lod0") || t.name == "envgb_thermal_lens")
-                    Line(sb, t.name, t, t.GetComponent<Renderer>(), helmet, head);
-            }
-            Line(sb, "helmet", helmet, null, helmet, head);
-            Line(sb, "head bone", head, null, helmet, head);
-            Rotators(sb, root);
-            EnvgFusionPlugin.Log?.LogInfo(sb.ToString());
-        }
+        foreach (string p in Prefixes)
+            if (t.name.StartsWith(p))
+                return true;
+        return false;
     }
 
-    private static Transform? Find(Transform root, string name)
+    private static void Write(EFT.Player player, bool down)
     {
+        Transform me = ((Component)player).transform;
+        int roots = 0;
+        foreach (Transform t in Resources.FindObjectsOfTypeAll<Transform>())
+        {
+            if (!t.gameObject.scene.IsValid() || !Named(t))
+                continue;
+            bool child = false;
+            for (Transform? p = t.parent; p != null; p = p.parent)
+                if (Named(p)) { child = true; break; }
+            if (child)
+                continue;
+            roots++;
+            Device(t, me, down, roots);
+        }
+        EnvgFusionPlugin.Log?.LogInfo("ENVG place: device " + (down ? "DOWN" : "UP") + ", local player " + me.name + " at " + P(me.position) + ", " + roots + " device root(s) in the scene (each logged above)");
+    }
+
+    private static void Device(Transform root, Transform me, bool down, int n)
+    {
+        var sb = new StringBuilder();
+        sb.Append("ENVG place: ").Append(down ? "DOWN" : "UP").Append(" [").Append(n).Append("] ").Append(root.name)
+          .Append(" active ").Append(root.gameObject.activeInHierarchy).Append(", on the local player ").Append(root.IsChildOf(me))
+          .Append(", scene ").Append(root.gameObject.scene.name).Append(", parent ").Append(root.parent != null ? root.parent.name : "none");
+        Transform? helmet = null, head = null;
+        sb.Append("\nENVG place:   chain (name local pos / local rot):");
+        for (Transform? p = root; p != null; p = p.parent)
+        {
+            sb.Append("\nENVG place:     ").Append(p.name).Append(' ').Append(P(p.localPosition)).Append(" / ").Append(Q(p.localRotation));
+            if (helmet == null && p != root && p.name.ToLowerInvariant().Contains("helmet"))
+                helmet = p;
+            if (head == null && p.name == "Base HumanHead")
+                head = p;
+        }
+        Line(sb, "root", root, null, helmet, head);
+        Transform? axis = null;
         foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
-            if (t.name == name)
-                return t;
-        return null;
+        {
+            if (t.name == "axis")
+                axis = t;
+            string lower = t.name.ToLowerInvariant();
+            if (lower.EndsWith("_lod0") || lower.Contains("mount") || t.name == "envgb_thermal_lens")
+                Line(sb, t.name, t, t.GetComponent<Renderer>(), helmet, head);
+        }
+        Line(sb, "axis", axis, null, helmet, head);
+        if (axis != null)
+            sb.Append("\nENVG place:   axis localRotation ").Append(Q(axis.localRotation)).Append(" localEuler ").Append(P(axis.localEulerAngles));
+        Line(sb, "helmet " + (helmet != null ? helmet.name : "(none named *helmet* in the chain)"), helmet, null, helmet, head);
+        Line(sb, "head bone of this device's player", head, null, helmet, head);
+        foreach (Component c in root.GetComponentsInChildren<Component>(true))
+        {
+            if (c == null || !c.GetType().Name.Contains("Rotator"))
+                continue;
+            sb.Append("\nENVG place:   ").Append(c.GetType().FullName).Append(" on ").Append(c.name).Append(':');
+            for (System.Type? type = c.GetType(); type != null && type != typeof(MonoBehaviour); type = type.BaseType)
+                foreach (FieldInfo f in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                    if (f.FieldType == typeof(float) || f.FieldType == typeof(bool) || f.FieldType == typeof(int))
+                        sb.Append(' ').Append(f.Name).Append('=').Append(f.GetValue(c));
+        }
+        EnvgFusionPlugin.Log?.LogInfo(sb.ToString());
     }
 
     private static void Line(StringBuilder sb, string label, Transform? t, Renderer? r, Transform? helmet, Transform? head)
     {
-        sb.Append("\n  ").Append(label).Append(": ");
+        sb.Append("\nENVG place:   ").Append(label).Append(": ");
         if (t == null) { sb.Append("not found"); return; }
         sb.Append("world ").Append(P(t.position));
         if (helmet != null) sb.Append(" in helmet ").Append(P(helmet.InverseTransformPoint(t.position)));
@@ -113,26 +124,62 @@ internal static class EnvgPlaceLog
             Vector3 c = r.bounds.center;
             sb.Append(" | bounds centre world ").Append(P(c));
             if (helmet != null) sb.Append(" in helmet ").Append(P(helmet.InverseTransformPoint(c)));
-            sb.Append(" (renderer enabled ").Append(r.enabled).Append(")");
+            if (head != null) sb.Append(" in head ").Append(P(head.InverseTransformPoint(c)));
+            sb.Append(" (renderer enabled ").Append(r.enabled).Append(')');
         }
     }
 
-    // the game's flip animation, whatever it is called on this device: every component named *Rotator* in the device,
-    // with its number and bool fields
-    private static void Rotators(StringBuilder sb, Transform root)
+    // ---- the eyepieces: one picture of what we hand them (in a fused mode, 2 s after the first such frame) ----
+    private static float _fuseAt = -1f;
+    private static bool _fuseDumped;
+    internal static void AfterFuse(RenderTexture i2, RenderTexture dest, Vector4 at, Vector4 field)
     {
-        foreach (Component c in root.GetComponentsInChildren<Component>(true))
+        if (_fuseDumped)
+            return;
+        string show = EnvgFusionPlugin.Show?.Value ?? "";
+        if (show != EnvgFusionPlugin.ShowFusion && show != EnvgFusionPlugin.ShowBlackHot)
+            return;
+        if (_fuseAt < 0f)
         {
-            if (c == null || !c.GetType().Name.Contains("Rotator"))
-                continue;
-            sb.Append("\n  ").Append(c.GetType().FullName).Append(" on ").Append(c.name).Append(":");
-            for (System.Type? type = c.GetType(); type != null && type != typeof(MonoBehaviour); type = type.BaseType)
-                foreach (FieldInfo f in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-                    if (f.FieldType == typeof(float) || f.FieldType == typeof(bool) || f.FieldType == typeof(int))
-                        sb.Append(' ').Append(f.Name).Append('=').Append(f.GetValue(c));
+            _fuseAt = Time.unscaledTime + 2f;
+            return;
         }
+        if (Time.unscaledTime < _fuseAt)
+            return;
+        _fuseDumped = true;
+        try
+        {
+            string dir = Path.Combine(Path.GetDirectoryName(typeof(EnvgPlaceLog).Assembly.Location) ?? "", "dump");
+            Directory.CreateDirectory(dir);
+            string stamp = System.DateTime.Now.ToString("HHmmss");
+            Save(dest, Path.Combine(dir, "fuse-" + stamp + "-dest.png"));
+            Save(i2, Path.Combine(dir, "fuse-" + stamp + "-i2.png"));
+            int w = dest.width, h = dest.height;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG place: eyepiece picture saved (dump/fuse-" + stamp + "-dest.png and -i2.png, " + w + "x" + h + "), FieldInMainUv "
+                + V(at) + ", _EnvgField " + V(field) + ": thermal rectangle x " + ((at.x - field.x) * w).ToString("F0") + "-" + ((at.x + field.x) * w).ToString("F0")
+                + ", y from the top " + ((1f - at.y - field.y) * h).ToString("F0") + "-" + ((1f - at.y + field.y) * h).ToString("F0")
+                + " px (" + (2f * field.x * w).ToString("F0") + "x" + (2f * field.y * h).ToString("F0") + "), screen " + Screen.width + "x" + Screen.height
+                + ", camera aspect " + (Camera.main != null ? Camera.main.aspect.ToString("F4") : "-") + ", ThermalField " + (EnvgFusionPlugin.ThermalField?.Value ?? 1f));
+        }
+        catch (System.Exception e)
+        {
+            EnvgFusionPlugin.Log?.LogWarning("ENVG place: eyepiece picture failed: " + e);
+        }
+    }
+
+    private static void Save(RenderTexture rt, string path)
+    {
+        RenderTexture? was = RenderTexture.active;
+        RenderTexture.active = rt;
+        var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGBA32, false);
+        tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+        tex.Apply();
+        RenderTexture.active = was;
+        File.WriteAllBytes(path, tex.EncodeToPNG());
+        Object.Destroy(tex);
     }
 
     private static string P(Vector3 v) => "(" + v.x.ToString("F4") + ", " + v.y.ToString("F4") + ", " + v.z.ToString("F4") + ")";
     private static string Q(Quaternion q) => "(" + q.x.ToString("F4") + ", " + q.y.ToString("F4") + ", " + q.z.ToString("F4") + ", " + q.w.ToString("F4") + ")";
+    private static string V(Vector4 v) => "(" + v.x.ToString("F4") + ", " + v.y.ToString("F4") + ", " + v.z.ToString("F4") + ", " + v.w.ToString("F4") + ")";
 }

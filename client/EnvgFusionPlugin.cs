@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.50.2";
+    public const string Version = "0.50.3";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -798,6 +798,7 @@ internal static class EnvgFusion
         _fuseDraw.SetViewport(new Rect(0f, 0f, dest.width, dest.height));
         _fuseDraw.DrawMesh(_fuseQuad, Matrix4x4.identity, Material, 0, pass);
         Graphics.ExecuteCommandBuffer(_fuseDraw);
+        EnvgPlaceLog.AfterFuse(i2, dest, at, Material.GetVector(FieldId));
         // the screen's own draw keeps the field at the centre
         Material.SetVector(FieldAtId, Vector4.zero);
         if (!_loggedFuse)
