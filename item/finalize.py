@@ -15,7 +15,9 @@ GPNVG = 'assets/content/items/equipment/customizable/gpnvg/nvg_l3_gpnvg-18_anvis
 TEMPLATE = 'nvg_l3_gpnvg-18_anvis_LOD0'
 COLOURS = ('black', 'tan')
 GLASS = ((0.02, 0.02, 0.022), (1.0, 1.0, 1.0), 3.2, 2.4)  # tint, spec colour, _Glossness, _Specularness
-GLASS_REFLECT = (0.80, 0.85, 1.0, 1.0)
+# The glass has no albedo map, so the shader's default white alpha makes the cubemap reflection ten times the
+# body's (alpha ~0.1): at 0.8 the lenses glowed lilac-white in the dark hideout. A faint blue-violet coating instead.
+GLASS_REFLECT = (0.10, 0.10, 0.14, 1.0)
 DEPENDENCIES = ['shaders', 'cubemaps']
 OUT = ITEM.parent / 'server'
 
