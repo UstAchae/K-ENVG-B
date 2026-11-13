@@ -209,7 +209,7 @@ internal static class EnvgHud
         // bottom centre: the display mode
         float bottom = centre.y - half.y + 0.75f * ts;
         n = 0;
-        Put(mode == EnvgFusionPlugin.ShowOutline ? "OUTLINE" : mode == EnvgFusionPlugin.ShowFusion ? "WHITE HOT" : mode == EnvgFusionPlugin.ShowBlackHot ? "BLACK HOT" : "THERMAL", ref n);
+        Put(mode == EnvgFusionPlugin.ShowOutline ? "OUTLINE" : mode == EnvgFusionPlugin.ShowFusion ? "WHITE HOT" : "BLACK HOT", ref n);
         Text(_buf, n, centre.x, bottom, ts, 0.5f);
 
         // bottom left: the battery (full)

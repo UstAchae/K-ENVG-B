@@ -24,19 +24,18 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.57.0";
+    public const string Version = "0.58.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
     internal static ManualLogSource? Log;
-    internal static ConfigEntry<bool>? On, WhitePhosphor, DumpBuffers, Symbology;
+    internal static ConfigEntry<bool>? On, WhitePhosphor, Symbology;
     internal static ConfigEntry<float>? GrassAmount, ThermalField, Latency, MinSpread, GroundPatches, BodyHeat, ShapeNeedsHeat, Washout, Temporal, LineWidth, Brightness, Amount, TubeBrightness, Softness, Glow, Smoothing, LensOffset, AirTemperature, LightHeating, SkyCooling, I2Noise, HeatEdges, GeometryEdges, ResidualHeat, Declutter, LocalContrast;
     internal static ConfigEntry<float>? SensorResolution;
     internal static ConfigEntry<int>? RenderScale;
     internal static ConfigEntry<string>? Show, HeatSource;
     internal const string SourceModel = "物理模型", SourceNative = "原版方法";
-    internal const string ShowOutline = "轮廓", ShowThermal = "热像原图", ShowGeometry = "几何边缘", ShowNormals = "表面朝向",
-        ShowFusion = "白热融合", ShowBlackHot = "黑热融合", ShowI2 = "纯夜视";
+    internal const string ShowOutline = "轮廓", ShowFusion = "白热融合", ShowBlackHot = "黑热融合", ShowI2 = "纯夜视";
     // the device's four modes, in the order the arrow keys step through them
     internal static readonly string[] Modes = { ShowI2, ShowOutline, ShowFusion, ShowBlackHot };
     internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? NextMode, PreviousMode;
@@ -49,8 +48,8 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         On = Config.Bind(Advanced, "调试：不戴 ENVG-B 也开启", false,
             new ConfigDescription("测试用：打开后，不戴 ENVG-B 也在全屏叠加热像。正常使用不用打开：戴上 ENVG-B 并放下就会工作。", null, new ConfigurationManagerAttributes { IsAdvanced = true }));
         Show = Config.Bind(Section, "显示内容", ShowOutline,
-            new ConfigDescription("ENVG-B 的四种模式（游戏里用 ← → 切换）：纯夜视：只有白磷夜视。轮廓：温差的边缘画成琥珀色的线。白热融合：整幅热像（热的亮）叠在夜视上。黑热融合：整幅热像（冷的亮，热的暗）叠在夜视上。热像原图、几何边缘、表面朝向：调试用。",
-                new AcceptableValueList<string>(ShowI2, ShowOutline, ShowFusion, ShowBlackHot, ShowThermal, ShowGeometry, ShowNormals), new ConfigurationManagerAttributes { Order = 9 }));
+            new ConfigDescription("ENVG-B 的四种模式（游戏里用 ← → 切换）：纯夜视：只有白磷夜视。轮廓：温差的边缘画成琥珀色的线。白热融合：整幅热像（热的亮）叠在夜视上。黑热融合：整幅热像（冷的亮，热的暗）叠在夜视上。",
+                new AcceptableValueList<string>(ShowI2, ShowOutline, ShowFusion, ShowBlackHot), new ConfigurationManagerAttributes { Order = 9 }));
         HeatSource = Config.Bind(Section, "热像来源", SourceModel,
             new ConfigDescription("物理模型：本模组按阳光、夜间散热、天空、植被、人体估算的温度。原版方法：照游戏原版热成像的做法，表面的热度取贴图颜色深浅，人按体温单独标热（用来对比）。三种热像模式都跟着变。",
                 new AcceptableValueList<string>(SourceModel, SourceNative), new ConfigurationManagerAttributes { Order = 8 }));
@@ -118,8 +117,6 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("像游戏的 TAA：用游戏自己的运动矢量把上一帧对齐后，和这一帧的热像、边缘强度混合（热像画面和轮廓线都不随游戏每帧的亚像素抖动闪动）。越大越稳，0 是关。", new AcceptableValueRange<float>(0f, 0.95f), advanced));
         Declutter = Config.Bind(Advanced, "去杂乱", 0f,
             new ConfigDescription("线密集的地方（树冠）压暗。0 是不压。", new AcceptableValueRange<float>(0f, 1f), advanced));
-        DumpBuffers = Config.Bind(Section, "导出热像缓冲（临时调试）", false,
-            new ConfigDescription("勾上后，把这一帧热像相机看到的画面、法线、颜色、深度、热像和轮廓各存一张 PNG 到本模组文件夹的 dump 里，然后自动取消勾选。", null, new ConfigurationManagerAttributes { Order = 0 }));
         LocalContrast = Config.Bind(Advanced, "局部对比", 0.35f,
             new ConfigDescription("按周围的温差定边缘强弱（小温差在大温差旁也显出来）。0 是按全画面。", new AcceptableValueRange<float>(0f, 1f), advanced));
         I2Noise = Config.Bind(Advanced, "夜视噪点", 0f,
@@ -349,7 +346,6 @@ internal static class EnvgFusion
     {
         EnvgChain.ResetHistory();
         _ringFilled = 0;
-        EnvgPlaceLog.Rearm();
     }
     private static readonly int ParallaxId = Shader.PropertyToID("_EnvgParallax");
     private static readonly int FieldId = Shader.PropertyToID("_EnvgField");
@@ -385,7 +381,7 @@ internal static class EnvgFusion
         if (Ridge == null || Glow == null || HistoryB == null || Material == null)
             return;
         float latency = (EnvgFusionPlugin.Latency?.Value ?? 40f) * 0.001f;
-        if (latency <= 0f || show == EnvgFusionPlugin.ShowThermal || show == EnvgFusionPlugin.ShowGeometry || show == EnvgFusionPlugin.ShowNormals)
+        if (latency <= 0f)
         {
             _ringFilled = 0;
             Material.SetTexture(GlowTexId, Glow);
@@ -407,135 +403,6 @@ internal static class EnvgFusion
         Material.SetTexture(HeatViewId, _ringHeat[at]);
     }
 
-    // TEMPORARY: the thermal camera's buffers of one frame as PNG files, to see what it really gets
-    private static void DumpAll(RenderTexture? screen, int screenWidth, int screenHeight)
-    {
-        try
-        {
-            string dir = Path.Combine(Path.GetDirectoryName(typeof(EnvgFusion).Assembly.Location) ?? "", "dump", System.DateTime.Now.ToString("HHmmss"));
-            Directory.CreateDirectory(dir);
-            // the scene data in full precision, for the offline preview (Unity/Assets/Editor/EnvgPreview.cs): raw RGBA floats
-            DumpRaw(dir, "screen", screen);
-            DumpRaw(dir, "picture", Picture);
-            DumpRaw(dir, "normals", Normals);
-            DumpRaw(dir, "albedo", Albedo);
-            DumpRaw(dir, "specular", Specular);
-            DumpRaw(dir, "depth", Depth);
-            DumpRaw(dir, "body", BodyMask);
-            DumpRaw(dir, "grassmask", GrassMask);
-            if (Picture != null)
-            {
-                EnvgChainInput t = ChainInput(Picture.width / Oversample, Picture.height / Oversample);
-                var inv = System.Globalization.CultureInfo.InvariantCulture;
-                var json = new System.Text.StringBuilder("{\n");
-                void Add(string key, float v) => json.Append("  \"").Append(key).Append("\": ").Append(v.ToString("R", inv)).Append(",\n");
-                Add("width", t.Width); Add("height", t.Height); Add("oversample", t.Oversample);
-                Add("tanX", t.Tan.x); Add("tanY", t.Tan.y);
-                for (int r = 0; r < 4; r++)
-                    for (int c = 0; c < 4; c++)
-                        Add("camToWorld" + r + c, t.CamToWorld[r, c]);
-                Add("amount", t.Amount); Add("softness", t.Softness); Add("brightness", t.Brightness); Add("glow", t.GlowAmount);
-                Add("residualHeat", t.ResidualHeat); Add("bodyHeat", t.BodyHeat); Add("groundPatches", t.GroundPatches); Add("air", t.Air);
-                Add("lightHeating", t.LightHeating); Add("daylight", t.Daylight); Add("skyCooling", t.SkyCooling); Add("smoothing", t.Smoothing);
-                Add("heatEdges", t.HeatEdges); Add("geometryEdges", t.GeometryEdges); Add("localContrast", t.LocalContrast);
-                Add("shapeNeedsHeat", t.ShapeNeedsHeat); Add("declutter", t.Declutter); Add("minSpread", t.MinSpread); Add("lineBase", t.LineBase); Add("lineHot", t.LineHot);
-                Add("screenWidth", screenWidth); Add("screenHeight", screenHeight);
-                Add("thermalField", EnvgFusionPlugin.ThermalField?.Value ?? 1f); Add("lensOffset", EnvgFusionPlugin.LensOffset?.Value ?? 4f);
-                Add("lineWidth", EnvgFusionPlugin.LineWidth?.Value ?? 1.5f); Add("washout", EnvgFusionPlugin.Washout?.Value ?? 1f);
-                json.Append("  \"version\": \"").Append(EnvgFusionPlugin.Version).Append("\"\n}\n");
-                File.WriteAllText(Path.Combine(dir, "frame.json"), json.ToString());
-            }
-            Dump(dir, "0_screen", screen, 0);
-            Dump(dir, "10_heat", HistoryB, 1);
-            Dump(dir, "11_edges", Edges, 0);
-            // and what was shown on the screen, overlay and all, at the end of this frame (to check the preview against)
-            ScreenCapture.CaptureScreenshot(Path.Combine(dir, "final.png"));
-            EnvgFusionPlugin.Log?.LogInfo("ENVG buffers dumped to " + dir);
-        }
-        catch (System.Exception e)
-        {
-            EnvgFusionPlugin.Log?.LogWarning("ENVG dump failed: " + e);
-        }
-    }
-
-    // a texture as raw RGBA 32-bit floats (width, height and the bytes), read back once
-    private static void DumpRaw(string dir, string name, RenderTexture? source)
-    {
-        if (source == null)
-            return;
-        RenderTexture tmp = RenderTexture.GetTemporary(source.width, source.height, 0, RenderTextureFormat.ARGBFloat);
-        RenderTexture previous = RenderTexture.active;
-        Graphics.Blit(source, tmp);
-        RenderTexture.active = tmp;
-        var read = new Texture2D(tmp.width, tmp.height, TextureFormat.RGBAFloat, false);
-        read.ReadPixels(new Rect(0, 0, tmp.width, tmp.height), 0, 0);
-        read.Apply();
-        RenderTexture.active = previous;
-        RenderTexture.ReleaseTemporary(tmp);
-        using (var file = new BinaryWriter(File.Create(Path.Combine(dir, name + ".raw"))))
-        {
-            file.Write(read.width);
-            file.Write(read.height);
-            file.Write(read.GetRawTextureData());
-        }
-        UnityEngine.Object.Destroy(read);
-    }
-
-    // mode 0: as is; 1: red channel stretched min..max; 2: linear depth d/(d+10); 3: raw depth stretched; 4: normals xyz and 1/depth
-    private static void Dump(string dir, string name, RenderTexture? source, int mode)
-    {
-        if (source == null)
-            return;
-        RenderTexture tmp = RenderTexture.GetTemporary(source.width, source.height, 0, RenderTextureFormat.ARGBFloat);
-        RenderTexture previous = RenderTexture.active;
-        Graphics.Blit(source, tmp);
-        RenderTexture.active = tmp;
-        var read = new Texture2D(tmp.width, tmp.height, TextureFormat.RGBAFloat, false);
-        read.ReadPixels(new Rect(0, 0, tmp.width, tmp.height), 0, 0);
-        read.Apply();
-        RenderTexture.active = previous;
-        RenderTexture.ReleaseTemporary(tmp);
-        Color[] px = read.GetPixels();
-        float lo = float.MaxValue, hi = float.MinValue;
-        foreach (Color c in px)
-        {
-            if (float.IsNaN(c.r) || float.IsInfinity(c.r) || c.r > 1e5f)
-                continue;
-            lo = Mathf.Min(lo, c.r);
-            hi = Mathf.Max(hi, c.r);
-        }
-        float span = Mathf.Max(hi - lo, 1e-6f);
-        for (int i = 0; i < px.Length; i++)
-        {
-            Color c = px[i];
-            switch (mode)
-            {
-                case 1:
-                case 3:
-                    float v = Mathf.Clamp01((c.r - lo) / span);
-                    c = new Color(v, v, v, 1f);
-                    break;
-                case 2:
-                    float d = c.r / (c.r + 10f);
-                    c = new Color(d, d, d, 1f);
-                    break;
-                case 4:
-                    c = new Color(c.r * 0.5f + 0.5f, c.g * 0.5f + 0.5f, c.b * 0.5f + 0.5f, 1f);
-                    break;
-                default:
-                    c.a = 1f;
-                    break;
-            }
-            px[i] = c;
-        }
-        var outTex = new Texture2D(read.width, read.height, TextureFormat.RGBA32, false);
-        outTex.SetPixels(px);
-        outTex.Apply();
-        File.WriteAllBytes(Path.Combine(dir, name + ".png"), outTex.EncodeToPNG());
-        File.AppendAllText(Path.Combine(dir, "ranges.txt"), name + " " + source.width + "x" + source.height + " " + source.format + " red " + lo + " .. " + hi + "\n");
-        UnityEngine.Object.Destroy(read);
-        UnityEngine.Object.Destroy(outTex);
-    }
     private static readonly int HistoryId = Shader.PropertyToID("_EnvgHistory");
     private static readonly int LagId = Shader.PropertyToID("_EnvgLag");
     private static readonly int I2Id = Shader.PropertyToID("_EnvgI2");
@@ -601,8 +468,6 @@ internal static class EnvgFusion
                     }
                 }
                 _envgbDown = _lastIsEnvgb && (nv.Togglable == null || nv.Togglable.On);
-                if (_lastIsEnvgb && player != null)
-                    EnvgPlaceLog.Seen(player, _envgbDown);
             }
             catch (System.Exception)
             {
@@ -718,15 +583,10 @@ internal static class EnvgFusion
                 return;
             Graphics.ExecuteCommandBuffer(_overlayDraw);
             RequestHistogram();
-            if (EnvgFusionPlugin.DumpBuffers != null && EnvgFusionPlugin.DumpBuffers.Value)
-            {
-                EnvgFusionPlugin.DumpBuffers.Value = false;
-                DumpAll(SsaaPicture(__instance) as RenderTexture, destination != null ? destination.width : Screen.width, destination != null ? destination.height : Screen.height);
-            }
             // Drawn the way SSAAImpl draws the frame: its target, the full output as the viewport (the camera's own is
             // still the smaller render size here) and its full-screen mesh, flipped as it flips it.
             string show = EnvgFusionPlugin.Show?.Value ?? EnvgFusionPlugin.ShowOutline;
-            Material.SetTexture(MainTexId, show == EnvgFusionPlugin.ShowThermal || show == EnvgFusionPlugin.ShowGeometry ? Heat : show == EnvgFusionPlugin.ShowNormals ? Normals : Ridge);
+            Material.SetTexture(MainTexId, Ridge);
             Mesh? mesh = __instance.FlippedV ? __instance.FullScreenYFlippedMesh : __instance.FullScreenMesh;
             if (mesh == null)
                 return;
@@ -752,8 +612,7 @@ internal static class EnvgFusion
             DelayThermal(show);
             _screenDraw.SetRenderTarget(destination);
             _screenDraw.SetViewport(new Rect(0f, 0f, width, height));
-            int pass = show == EnvgFusionPlugin.ShowThermal ? 15 : show == EnvgFusionPlugin.ShowGeometry ? 17 : show == EnvgFusionPlugin.ShowNormals ? 4
-                : show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
+            int pass = show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
             Material.SetVector(FusionId, new Vector4(show == EnvgFusionPlugin.ShowBlackHot ? -1f : 1f, 0.85f, 0f, 0f));
             Material.SetVector(ScreenTexelId, new Vector4(1f / Mathf.Max(width, 1), 1f / Mathf.Max(height, 1), EnvgFusionPlugin.LineWidth?.Value ?? 1.5f, 0f));
             _screenDraw.DrawMesh(mesh, Matrix4x4.identity, Material, 0, pass);
@@ -807,7 +666,7 @@ internal static class EnvgFusion
             };
             _fuseQuad.UploadMeshData(true);
         }
-        Material.SetTexture(MainTexId, show == EnvgFusionPlugin.ShowThermal || show == EnvgFusionPlugin.ShowGeometry ? Heat : show == EnvgFusionPlugin.ShowNormals ? Normals : Ridge);
+        Material.SetTexture(MainTexId, Ridge);
         float washout = EnvgFusionPlugin.Washout?.Value ?? 1f;
         Material.SetTexture(SceneUnderId, i2);
         Material.SetVector(WashoutId, new Vector4(washout, 0f, 0f, 0f));
@@ -825,8 +684,7 @@ internal static class EnvgFusion
         // lens (ENVG-B: lens x 0.0023, right eyepiece x 0.0308 in the model): so against that eye the lens is up and left
         float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
         Material.SetVector(ParallaxId, new Vector4(lens, 0.5f / Mathf.Max(_tan.y, 1e-4f), LensLeftOfRightEye, 0.5f / Mathf.Max(_tan.x, 1e-4f)));
-        int pass = show == EnvgFusionPlugin.ShowThermal ? 15 : show == EnvgFusionPlugin.ShowGeometry ? 17 : show == EnvgFusionPlugin.ShowNormals ? 4
-            : show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
+        int pass = show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
         Material.SetVector(FusionId, new Vector4(show == EnvgFusionPlugin.ShowBlackHot ? -1f : 1f, 0.85f, 0f, 0f));
         Material.SetVector(ScreenTexelId, new Vector4(1f / Mathf.Max(dest.width, 1) / _crop.z, 1f / Mathf.Max(dest.height, 1) / _crop.w, EnvgFusionPlugin.LineWidth?.Value ?? 1.5f, 0f));
         _fuseDraw ??= new CommandBuffer { name = "Justachae ENVG into the eyepieces" };
@@ -837,7 +695,6 @@ internal static class EnvgFusion
         _fuseDraw.DrawMesh(_fuseQuad, Matrix4x4.identity, Material, 0, pass);
         Symbology(_fuseDraw, dest, at, show, settled);
         Graphics.ExecuteCommandBuffer(_fuseDraw);
-        EnvgPlaceLog.AfterFuse(i2, dest, at, Material.GetVector(FieldId));
         // the screen's own draw keeps the field at the centre
         Material.SetVector(FieldAtId, Vector4.zero);
         if (!_loggedFuse)
