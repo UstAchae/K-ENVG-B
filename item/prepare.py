@@ -45,7 +45,10 @@ GP_OFF = (0.98575121, -3.6230801e-08, -4.6429719e-08, 0.16821051)
 # put on the slot's centre line at PLATE_Y, and the whole ENVG-B moved with it as one rigid body, until its rearmost
 # point touches the shroud face. The device stays where the mount holds it (the eyecups no longer chase the GPNVG-18's
 # eyes; an adjustable mount can bring them to the eyes later).
-PLATE_Y = 0.005
+# The FLUX shroud face is flat from y -0.03 to +0.045, with lips standing ~6 mm proud at y -0.03..-0.025 and
+# +0.03..+0.04. At -0.003 the plate (about 41 mm tall) sits between the lips, 7 mm above the lower one; it was at
+# 0.005 (touching the upper lip), which left the height adjustment only 3 mm downward (user: "往下还能给点距离吗").
+PLATE_Y = -0.003
 SEAT_GAP = 0.0005
 # Joints of the mount, for K-3PS-C's adjustments (its NightVisionMount): measured on the seated, deployed model in
 # the root frame. The flip hinge is the barrel between Mount_02 and Mount_03 (circle fit of Mount_03's eye, 0.14 mm
