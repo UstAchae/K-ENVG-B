@@ -7,19 +7,15 @@ using UnityEngine;
 using UnityEngine.Rendering;
 // Builds one bundle per colour from what item/prepare.py wrote to Assets/Source/<colour>. The prefab copies the
 // GPNVG-18's layout and components (nvg_l3_gpnvg-18_anvis): root with LODGroup, Dress, NightVisionDevice,
-// CurveRotator, NightVisionMount and PreviewPivot; the hinge "axis" (the GPNVG-18's place, deployed rotation)
+// CurveRotator, NightVisionMount and PreviewPivot; the hinge "axis" (the ENVG-B's own mount knuckle, deployed rotation; see prepare.py)
 // carrying the device node nvg_envgb_psq42_LOD0 (with its glass and the thermal lens marker as children) and the
 // face light; the shroud adapter stays on the root. Run: -executeMethod EnvgbBuilder.Build
 public static class EnvgbBuilder {
  const string Src="Assets/Source",Gen="Assets/Generated";
  static readonly string Out=Path.GetFullPath(Path.Combine(Application.dataPath,"../../built"));
  public const string DeviceNode="nvg_envgb_psq42_LOD0",ThermalLens="envgb_thermal_lens";
- [Serializable] public class Info {public string colour;public float[] thermalLens,boundsMin,boundsMax;}
+ [Serializable] public class Info {public string colour;public float[] thermalLens,boundsMin,boundsMax,axisPos,onRotation,offRotation,devicePos;}
 
- // The GPNVG-18's hinge and flip (from its bundle).
- static readonly Vector3 AxisPos=new Vector3(-0.000388f,-0.0322f,0.0456f);
- static readonly Quaternion OnRotation=new Quaternion(0.47860321f,-5.5665769e-08f,1.9227921e-08f,-0.87803131f);
- static readonly Quaternion OffRotation=new Quaternion(0.98575121f,-3.6230801e-08f,-4.6429719e-08f,0.16821051f);
  const float RotationSpeed=0.75187969f;
  static AnimationCurve Curve(){
   var c=new AnimationCurve(
@@ -29,6 +25,8 @@ public static class EnvgbBuilder {
   c.preWrapMode=WrapMode.ClampForever;c.postWrapMode=WrapMode.ClampForever;return c;
  }
 
+ static Vector3 V(float[] a)=>new Vector3(a[0],a[1],a[2]);
+ static Quaternion Q(float[] a)=>new Quaternion(a[0],a[1],a[2],a[3]);
  static Vector3[] R3(BinaryReader r,int n){var a=new Vector3[n];for(int i=0;i<n;i++)a[i]=new Vector3(r.ReadSingle(),r.ReadSingle(),r.ReadSingle());return a;}
  static Vector2[] R2(BinaryReader r,int n){var a=new Vector2[n];for(int i=0;i<n;i++)a[i]=new Vector2(r.ReadSingle(),r.ReadSingle());return a;}
  static Mesh ReadMesh(string path,string name,string gen){
@@ -84,9 +82,12 @@ public static class EnvgbBuilder {
 
   var root=new GameObject(name);
   var axis=new GameObject("axis");axis.transform.SetParent(root.transform,false);
-  axis.transform.localPosition=AxisPos;axis.transform.localRotation=new Quaternion(-OnRotation.x,-OnRotation.y,-OnRotation.z,-OnRotation.w);
+  // Hinge and flip from prepare.py: the ENVG-B seated on the shroud, turning at its own mount's knuckle by the
+  // GPNVG-18's flip.
+  var on=Q(info.onRotation);var off=Q(info.offRotation);
+  axis.transform.localPosition=V(info.axisPos);axis.transform.localRotation=on;
 
-  var lod=new GameObject(DeviceNode);lod.transform.SetParent(axis.transform,false);
+  var lod=new GameObject(DeviceNode);lod.transform.SetParent(axis.transform,false);lod.transform.localPosition=V(info.devicePos);
   lod.AddComponent<MeshFilter>().sharedMesh=device;
   var devR=lod.AddComponent<MeshRenderer>();devR.sharedMaterial=body;devR.shadowCastingMode=ShadowCastingMode.On;devR.receiveShadows=true;
   var box=lod.AddComponent<BoxCollider>();box.center=device.bounds.center;box.size=device.bounds.size;box.enabled=false;  // disabled like native items
@@ -101,7 +102,7 @@ public static class EnvgbBuilder {
   lens.transform.localRotation=Quaternion.LookRotation(Vector3.down,Vector3.forward);
 
   // Face light, as the GPNVG-18's "Point light" (off; the game switches it).
-  var lightGo=new GameObject("Point light");lightGo.transform.SetParent(axis.transform,false);
+  var lightGo=new GameObject("Point light");lightGo.transform.SetParent(lod.transform,false);
   lightGo.transform.localPosition=new Vector3(0.0004f,0.0516f,-0.075f);lightGo.transform.localRotation=new Quaternion(0.479f,0,0,0.878f);
   var light=lightGo.AddComponent<Light>();light.type=LightType.Point;light.color=new Color(0.28275859f,1f,0f);light.intensity=3.14f;light.range=0.05f;light.enabled=false;
 
@@ -114,7 +115,7 @@ public static class EnvgbBuilder {
   var lodGroup=root.AddComponent<LODGroup>();lodGroup.SetLODs(new[]{new LOD(0.02f,renderers)});lodGroup.size=0.5f;
   var dress=root.AddComponent<Dress>();dress.DecalTextureType=1;dress.Renderers=renderers;
   root.AddComponent<NightVisionDevice>().Set(light);
-  var rot=root.AddComponent<CurveRotator>();rot.RotatedTransform=axis.transform;rot.RotationSpeed=RotationSpeed;rot.OffRotation=OffRotation;rot.OnRotation=OnRotation;rot.AnimationCurve=Curve();
+  var rot=root.AddComponent<CurveRotator>();rot.RotatedTransform=axis.transform;rot.RotationSpeed=RotationSpeed;rot.OffRotation=off;rot.OnRotation=on;rot.AnimationCurve=Curve();
   root.AddComponent<NightVisionMount>().Set(rot);
 
   // Preview: the GPNVG-18's view angles, centred on this device's bounds in the root frame.

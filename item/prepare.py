@@ -7,9 +7,10 @@
 #
 # Frames. The device node copies the GPNVG-18 (nvg_l3_gpnvg-18_anvis_LOD0): eyepieces toward +Y (the eye looks along
 # -Y), mount toward +Z, the wearer's right +X. The FBX (Blender, right-handed, Z up) faces -Y with its right at -X,
-# so x is mirrored; the eyecup rims are placed where the GPNVG-18's eyecups are (midway between each eye's two
-# lenses, at its plate top), which also lands Mount_01 on the GPNVG-18 base's shroud interface. The prefab root and
-# the hinge ("axis") are the GPNVG-18's, with the axis at its deployed rotation.
+# so x is mirrored; the device node's origin is put where the GPNVG-18's eyecups are (a common frame for K-3PS-C's
+# eyepiece geometry). Where the whole ENVG-B sits is decided by its mount, not its eyes: Mount_01 is seated flat on
+# the helmet shroud at the slot (see "Seating" below), the device hangs from it as modelled and flips at its own
+# mount knuckle; the hinge pose goes to info.json for the Unity builder.
 #
 # Left out: the objective lens caps (closed over the objectives; they are off when the device is in use) and the
 # battery pack with its cable (it would sit inside the head).
@@ -30,13 +31,20 @@ THERMAL_WINDOW = 'Opacity_Mid'
 # Where the eyecup rims go: the GPNVG-18's eyecups, midway between its eyes (x 0), plate top y 0.0505, z -0.0757.
 # Each colour sits elsewhere in the FBX (side by side), so the offset is measured per colour from its eyecups.
 EYES = np.array([0.0, 0.0505, -0.0757])
-# The flipping device then moves 20 mm further toward the face (+Y), so the deep eyecups' lips meet the face as the
-# N-15's do (glass 33.5 mm under the lip, lip at y ~0.07, eye relief ~35 mm; measured for K-3PS-C). The shroud
-# adapter (Mount_01) stays on the GPNVG-18's shroud interface: the arm slides 20 mm in it, as the real mount's
-# fore-aft adjustment does.
-DEVICE_SHIFT = np.array([0.0, 0.020, 0.0])
 AXIS_POS = np.array([-0.000388, -0.032200, 0.045600])  # GPNVG-18 "axis" localPosition
 AXIS_ROT = (-0.4786032, 0.0, 0.0, 0.8780313)  # its deployed rotation (CurveRotator.OnRotation, sign flipped)
+# GPNVG-18's CurveRotator quaternions as stored (deployed, flipped up); the ENVG-B flips by the same turn.
+GP_ON = (0.47860321, -5.5665769e-08, 1.9227921e-08, -0.87803131)
+GP_OFF = (0.98575121, -3.6230801e-08, -4.6429719e-08, 0.16821051)
+# Seating on the helmet. The prefab root sits on the helmet's mod_nvg node, which lies on the front face of the NVG
+# shroud: in the root frame the shroud face is the plane z = 0 (the helmet behind it, z < 0) and +Y runs up it,
+# measured on the Ops-Core FAST with the GPNVG-18's G24 base, whose tongue enters the shroud at the origin. The
+# ENVG-B's shroud plate (Mount_01, a flat plate) is turned about X until it lies parallel to that face, its centre
+# put on the slot's centre line at PLATE_Y, and the whole ENVG-B moved with it as one rigid body, until its rearmost
+# point touches the shroud face. The device stays where the mount holds it (the eyecups no longer chase the GPNVG-18's
+# eyes; an adjustable mount can bring them to the eyes later).
+PLATE_Y = 0.005
+SEAT_GAP = 0.0005
 TEX_SIZE = 2048
 NORMAL_DX = False
 
@@ -57,15 +65,60 @@ def offset(parts, colour):
     return EYES - np.array([(lo[0] + hi[0]) / 2, hi[1], (lo[2] + hi[2]) / 2])
 
 
-def load(parts, colour, names, root_frame=False):
+def rot_x(a):
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+
+
+def qmul(a, b):
+    ax, ay, az, aw = a; bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by, aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw, aw * bw - ax * bx - ay * by - az * bz)
+
+
+def qx(a): return (np.sin(a / 2), 0.0, 0.0, np.cos(a / 2))
+
+
+def plate(pts, tol=0.0008, iters=4000):
+    """The largest flat face among the points (RANSAC, seeded), refined by a least-squares fit."""
+    rng = np.random.default_rng(1)
+    pts = np.unique(pts.round(5), axis=0)
+    best = None
+    for _ in range(iters):
+        a, b, c = pts[rng.choice(len(pts), 3, replace=False)]
+        n = np.cross(b - a, c - a); l = np.linalg.norm(n)
+        if l < 1e-9: continue
+        inl = np.abs((pts - a) @ (n / l)) < tol
+        if best is None or inl.sum() > best.sum(): best = inl
+    P = pts[best]; c = P.mean(0)
+    n = np.linalg.svd(P - c)[2][2]
+    return (n if n[2] > 0 else -n), c
+
+
+def seat_for(parts, colour):
+    """Rigid correction (rotation about X, translation) seating Mount_01 on the shroud face, applied in the root
+    frame after the deployed pose."""
+    m = load(parts, colour, MOUNT, root_frame=True, seat=None)[0]
+    n, c = plate(m)
+    a = np.arctan2(n[1], n[2])  # rotating by a about X turns the plate's normal onto +Z
+    R = rot_x(a)
+    m2 = (m - c) @ R.T + c
+    t = np.array([-c[0], PLATE_Y - c[1], SEAT_GAP - m2[:, 2].min()]) + c - R @ c
+    print(f'{colour}: shroud plate normal {n.round(3)}, turned {np.degrees(a):.1f} deg about X, moved {(t + R @ c - c).round(4)}')
+    return R, t, a
+
+
+def load(parts, colour, names, root_frame=False, seat=None):
     P, N, U = [], [], []
     off = offset(parts, colour)
     for n in names:
         d = np.load(parts / f'AN-PSQ-42_{colour}_{n}.npz')
         p, nr = mirror(d['pos']) + off, mirror(d['nor'])
-        if not root_frame: p = p + DEVICE_SHIFT
         if root_frame:
+            # Deployed, in the root frame: the GPNVG-18's hinge pose, then the seat correction.
             R = qmat(AXIS_ROT); p = AXIS_POS + p @ R.T; nr = nr @ R.T
+            if seat is not None:
+                Rs, ts = seat; p = p @ Rs.T + ts; nr = nr @ Rs.T
         # The mirror reverses the winding: swap two corners of every triangle.
         idx = np.arange(len(p)).reshape(-1, 3)[:, [0, 2, 1]].ravel()
         P.append(p[idx]); N.append(nr[idx]); U.append(d['uv'][idx])
@@ -116,15 +169,31 @@ def main(parts, tex):
     shared = tuple(channel(tex / f'AN-PSQ-42_{k}.png') for k in ('ao', 'roughness', 'metalness'))
     for colour in COLOURS:
         out = UNITY / colour.lower(); out.mkdir(parents=True, exist_ok=True)
+        Rs, ts, a = seat_for(parts, colour)
         dev = write_mesh(out / 'device.bin', *load(parts, colour, DEVICE))
         glass = write_mesh(out / 'glass.bin', *load(parts, colour, GLASS))
-        write_mesh(out / 'mount.bin', *load(parts, colour, MOUNT, root_frame=True))
+        write_mesh(out / 'mount.bin', *load(parts, colour, MOUNT, root_frame=True, seat=(Rs, ts)))
         # Thermal window: centre of its disc; the device looks along -Y.
         w = load(parts, colour, [THERMAL_WINDOW])[0]
         allp = np.vstack([dev, glass])
+        # The hinge: the knuckle where Mount_02 turns on the shroud plate (its bounding-box centre), deployed and
+        # seated, in the root frame. The axis sits there with the seated deployed rotation; the device node is
+        # offset inside it so that, deployed, every point lands where the seated assembly puts it.
+        Ron = qmat(AXIS_ROT)
+        knuckle_lod = load(parts, colour, ['Mount_02'])[0]
+        knuckle_lod = (knuckle_lod.min(0) + knuckle_lod.max(0)) / 2
+        def seated(p): return Rs @ (AXIS_POS + Ron @ p) + ts
+        pivot = seated(knuckle_lod)
+        q_on = qmul(qx(a), GP_ON); q_off = qmul(qx(a), GP_OFF)
+        Q = qmat(q_on)
+        node = Q.T @ (seated(np.zeros(3)) - pivot)
         info = {'colour': colour.lower(),
                 'thermalLens': ((w.min(0) + w.max(0)) / 2).tolist(),
-                'boundsMin': allp.min(0).tolist(), 'boundsMax': allp.max(0).tolist()}
+                'boundsMin': allp.min(0).tolist(), 'boundsMax': allp.max(0).tolist(),
+                'axisPos': pivot.tolist(), 'onRotation': list(q_on), 'offRotation': list(q_off),
+                'devicePos': node.tolist()}
+        assert np.allclose(pivot + Q @ (node + knuckle_lod), seated(knuckle_lod), atol=1e-6)
+        print(colour, 'hinge at', pivot.round(4), 'device node offset', node.round(4))
         (out / 'info.json').write_text(json.dumps(info, indent=1))
         print(colour, 'thermal lens at', np.round(info['thermalLens'], 4))
         textures(tex, colour, out, shared)
