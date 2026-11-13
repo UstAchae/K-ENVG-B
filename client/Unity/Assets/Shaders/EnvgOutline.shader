@@ -212,6 +212,22 @@ Shader "Justachae/ENVG/Outline"
         return fade * saturate(1.0 - max(d.x * (_EnvgField.y / max(_EnvgField.x, 1e-4)), d.y) / soft);
     }
 
+    // The thermal lens sits about 13 cm in front of the eye: nothing nearer can be in its view (the goggle's own tubes
+    // and eyecups, which the main camera may see for a frame). Those pixels, and a few around them (their edge),
+    // show no thermal picture at all. tuv: the thermal textures' uv.
+    float beyondLens(float2 tuv)
+    {
+        const float lensReach = 0.15;   // the lens's distance ahead of the eye and a margin (m)
+        float2 t = _EnvgScreenTexel.xy * 3.0;
+        float d = tex2Dlod(_EnvgDepth, float4(tuv, 0, 0)).r;
+        d = min(d, tex2Dlod(_EnvgDepth, float4(tuv + float2(t.x, 0), 0, 0)).r);
+        d = min(d, tex2Dlod(_EnvgDepth, float4(tuv - float2(t.x, 0), 0, 0)).r);
+        d = min(d, tex2Dlod(_EnvgDepth, float4(tuv + float2(0, t.y), 0, 0)).r);
+        d = min(d, tex2Dlod(_EnvgDepth, float4(tuv - float2(0, t.y), 0, 0)).r);
+        // (no surface at all reads 0: that is the sky, far, not near)
+        return d <= 0.0 ? 1.0 : smoothstep(lensReach, lensReach + 0.03, d);
+    }
+
     // the overlay's light adds to the tube's: where the tube is already near white, the copper hardly changes what the
     // eye sees, and the lines sink into the bright background; on a dark background they stand out in full
     float washout(float2 uv)
@@ -251,6 +267,9 @@ Shader "Justachae/ENVG/Outline"
         if (field <= 0.0)
             return float4(0, 0, 0, 1);
         float2 tuv = thermalUv(i.uv);
+        field *= beyondLens(tuv);
+        if (field <= 0.0)
+            return float4(0, 0, 0, 1);
         float core = edgeAt(tuv);
         // the glow around each line, as the overlay's bright lines bloom in the eyepiece: the lines blurred (a few
         // pixels), not a ring of shifted copies (which drew a crosshatch into every line)
@@ -1020,6 +1039,7 @@ Shader "Justachae/ENVG/Outline"
                 if (field <= 0.0)
                     return float4(0, 0, 0, 0);
                 float2 tuv = thermalUv(i.uv);
+                field *= beyondLens(tuv);
                 // the picture in two layers, as a thermal core's detail enhancement makes it: the base (the heat averaged
                 // over one surface only, so no halo crosses an edge), equalized over the display; the detail (the heat
                 // less its base: a face, the gear, the bark), added on top

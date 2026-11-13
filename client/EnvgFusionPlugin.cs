@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.55.0";
+    public const string Version = "0.56.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -102,7 +102,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("白天存下的热：深色、厚重的表面（石头、土、树干、水泥）夜里比空气暖。按几像素内平均的颜色算，不会画出贴图花纹。", new AcceptableValueRange<float>(0f, 15f), advanced));
         ThermalField = Config.Bind(Advanced, "热像视场（相对夜视管）", 1f,
             new ConfigDescription("热像画面是夜视管圆形视野里的一个 4:3 矩形：1 是真机的比例：宽为夜视管视野直径的 0.68、高 0.52。矩形外只有夜视画面。0 是铺满全屏。", new AcceptableValueRange<float>(0f, 1.5f), advanced));
-        Latency = Config.Bind(Advanced, "热像延迟（毫秒）", 40f,
+        Latency = Config.Bind(Advanced, "热像延迟（毫秒）", 0f,
             new ConfigDescription("非制冷热像探测器加数字处理和显示的延迟：转头时轮廓比夜视画面慢这么多。0 是不延迟。", new AcceptableValueRange<float>(0f, 60f), advanced));
         MinSpread = Config.Bind(Advanced, "热像增益上限（°C）", 3f,
             new ConfigDescription("热像增益的上限：整个画面温差小于这个值时（比如夜里），不会再把细小温差放大成满屏的线。", new AcceptableValueRange<float>(0.3f, 20f), advanced));

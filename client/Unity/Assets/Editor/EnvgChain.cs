@@ -91,7 +91,7 @@ internal static class EnvgChain
 
     // ---- plateau histogram equalization of the fused display (the base layer's temperatures) ----
     internal const int HeWidth = 160, HeHeight = 90, HeBins = 256;
-    private static RenderTexture? _heSmall;
+    private static RenderTexture? _heSmall, _heHalf, _heQuarter;
     internal static RenderTexture? HeSmall;
     private static Texture2D? _heLut;
     private static readonly float[] _heLevels = new float[HeBins], _heTarget = new float[HeBins];
@@ -168,9 +168,15 @@ internal static class EnvgChain
             run += c;
             _heTarget[b] = 0.75f * level + 0.25f * (b + 0.5f) / HeBins;
         }
-        float k = instant || !_heValid ? 1f : 1f - Mathf.Exp(-Mathf.Max(dt, 0f) / 0.5f);
-        _heLo += (lo - _heLo) * k;
-        _heHi += (hi - _heHi) * k;
+        // followed over two seconds, as a real core's gain moves; the range only once it is off by more than 5 percent
+        // of its span (a still scene's statistics wander a little from frame to frame and must not move the display)
+        float k = instant || !_heValid ? 1f : 1f - Mathf.Exp(-Mathf.Max(dt, 0f) / 2f);
+        float dead = 0.05f * Mathf.Max(_heHi - _heLo, 1e-5f);
+        if (instant || !_heValid || Mathf.Abs(lo - _heLo) > dead || Mathf.Abs(hi - _heHi) > dead)
+        {
+            _heLo += (lo - _heLo) * k;
+            _heHi += (hi - _heHi) * k;
+        }
         for (int b = 0; b < HeBins; b++)
             _heLevels[b] += (_heTarget[b] - _heLevels[b]) * k;
         _heValid = true;
@@ -185,6 +191,8 @@ internal static class EnvgChain
     internal static void Release()
     {
         Free(ref _heSmall);
+        Free(ref _heHalf);
+        Free(ref _heQuarter);
         Free(ref _foliageWide);
         Free(ref _foliageWideAcross);
         HeSmall = null;
@@ -282,7 +290,13 @@ internal static class EnvgChain
             cb.Blit(t.HeatBase, t.HistoryB, m, 30);
             // and a small copy of the base for the histogram (read back to the CPU)
             HeSmall = Ensure(ref _heSmall, HeWidth, HeHeight, RenderTextureFormat.RFloat, "Justachae ENVG histogram source");
-            cb.Blit(t.HeatBase, _heSmall);
+            // averaged down in halving steps (a plain copy picked every few pixels, and as the view swayed the picked
+            // ones changed: the percentiles and the whole display breathed)
+            RenderTexture heHalf = Ensure(ref _heHalf, Mathf.Max(HeWidth * 2, 2), Mathf.Max(HeHeight * 2, 2), RenderTextureFormat.RFloat, "Justachae ENVG histogram source, half");
+            RenderTexture heQuarter = Ensure(ref _heQuarter, Mathf.Max(HeWidth * 4, 4), Mathf.Max(HeHeight * 4, 4), RenderTextureFormat.RFloat, "Justachae ENVG histogram source, quarter");
+            cb.Blit(t.HeatBase, heQuarter);
+            cb.Blit(heQuarter, heHalf);
+            cb.Blit(heHalf, _heSmall);
         }
         // the gain control: the picture's mean and spread over the surfaces only (the cold sky would set the scale and
         // flatten everything on the ground), followed over a second
