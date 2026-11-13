@@ -34,6 +34,7 @@ internal sealed class EnvgChainInput
     public float FoliageStepLo = 0.12f, FoliageStepHi = 0.3f;
     public float LineBase = 0.4f, LineHot = 1.2f, LineHotAbove = 12f;
     public float Smoothing = 1f, HeatEdges = 1f, GeometryEdges = 1f, LocalContrast = 1f, ShapeNeedsHeat = 1f, Temporal = 0.8f, Declutter = 1f;
+    public float HeatTemporal = 0.8f;   // the heat picture's own history share (pass 36)
 }
 
 internal static class EnvgChain
@@ -87,7 +88,17 @@ internal static class EnvgChain
     // the thermal core's gain control (mean and mean square of the picture, followed over a second)
     internal static RenderTexture? Agc => _agcB;
 
-    internal static void ResetHistory() => _edgeHistoryValid = false;
+    internal static void ResetHistory()
+    {
+        _edgeHistoryValid = false;
+        _heatHistoryValid = false;
+    }
+
+    // the heat picture's own history (pass 36), ping-ponged
+    private static RenderTexture? _heatHistA, _heatHistB;
+    private static bool _heatFlip, _heatHistoryValid;
+    private static readonly int HeatHistoryId = Shader.PropertyToID("_EnvgHeatHistory");
+    private static readonly int HeatTemporalId = Shader.PropertyToID("_EnvgHeatTemporal");
 
     // ---- plateau histogram equalization of the fused display (the base layer's temperatures) ----
     internal const int HeWidth = 160, HeHeight = 90, HeBins = 256;
@@ -191,6 +202,8 @@ internal static class EnvgChain
     internal static void Release()
     {
         Free(ref _heSmall);
+        Free(ref _heatHistA);
+        Free(ref _heatHistB);
         Free(ref _heHalf);
         Free(ref _heQuarter);
         Free(ref _foliageWide);
@@ -283,6 +296,23 @@ internal static class EnvgChain
         // seams between meshes that see no surface are filled from the surfaces around; the geometric edges into g
         cb.Blit(t.Heat2x, t.Seams, m, 16);
         cb.Blit(t.Seams, t.HistoryB);
+        // followed in time (the jittered copy's edges settle, as the game's TAA settles its picture)
+        if (t.FromMain && t.MotionReady && t.HeatTemporal > 0f && t.Motion != null && t.HistoryB != null)
+        {
+            Ensure(ref _heatHistA, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.ARGBHalf, "Justachae ENVG heat, followed A");
+            Ensure(ref _heatHistB, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.ARGBHalf, "Justachae ENVG heat, followed B");
+            RenderTexture previous = _heatFlip ? _heatHistA! : _heatHistB!;
+            RenderTexture next = _heatFlip ? _heatHistB! : _heatHistA!;
+            _heatFlip = !_heatFlip;
+            cb.SetGlobalTexture(MotionId, t.Motion);
+            cb.SetGlobalTexture(HeatHistoryId, previous);
+            cb.SetGlobalVector(HeatTemporalId, new Vector4(_heatHistoryValid ? t.HeatTemporal : 0f, 0f, 0f, 0f));
+            cb.Blit(t.HistoryB, next, m, 36);
+            cb.Blit(next, t.HistoryB);
+            _heatHistoryValid = true;
+        }
+        else
+            _heatHistoryValid = false;
         // the base layer for the fused display: the heat averaged over one surface (about three pixels), into alpha
         if (t.HeatBase != null)
         {

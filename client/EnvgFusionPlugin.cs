@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.56.0";
+    public const string Version = "0.57.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -115,7 +115,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         Washout = Config.Bind(Advanced, "亮处淡出", 1f,
             new ConfigDescription("热像轮廓和夜视画面是两束光相加：被灯照亮、夜视画面接近发白的地方，轮廓融进亮背景里看不出来，暗处的轮廓才醒目（像实物视频里那样）。0 是不淡出。", new AcceptableValueRange<float>(0f, 1f), advanced));
         Temporal = Config.Bind(Advanced, "时间平滑", 0.8f,
-            new ConfigDescription("像游戏的 TAA：用游戏自己的运动矢量把上一帧对齐后，和这一帧的边缘强度混合，再决定画不画线，轻微晃动时线不闪。越大越稳，0 是关。", new AcceptableValueRange<float>(0f, 0.95f), advanced));
+            new ConfigDescription("像游戏的 TAA：用游戏自己的运动矢量把上一帧对齐后，和这一帧的热像、边缘强度混合（热像画面和轮廓线都不随游戏每帧的亚像素抖动闪动）。越大越稳，0 是关。", new AcceptableValueRange<float>(0f, 0.95f), advanced));
         Declutter = Config.Bind(Advanced, "去杂乱", 0f,
             new ConfigDescription("线密集的地方（树冠）压暗。0 是不压。", new AcceptableValueRange<float>(0f, 1f), advanced));
         DumpBuffers = Config.Bind(Section, "导出热像缓冲（临时调试）", false,
@@ -664,6 +664,7 @@ internal static class EnvgFusion
         t.LocalContrast = EnvgFusionPlugin.LocalContrast?.Value ?? 0.35f;
         t.ShapeNeedsHeat = EnvgFusionPlugin.ShapeNeedsHeat?.Value ?? 1f;
         t.Temporal = EnvgFusionPlugin.Temporal?.Value ?? 0.8f;
+        t.HeatTemporal = t.Temporal;
         t.Declutter = EnvgFusionPlugin.Declutter?.Value ?? 0f;
         t.MinSpread = EnvgFusionPlugin.MinSpread?.Value ?? 3f;
         t.NativeMethod = EnvgFusionPlugin.HeatSource?.Value == EnvgFusionPlugin.SourceNative;

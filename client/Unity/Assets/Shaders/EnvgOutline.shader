@@ -1552,5 +1552,41 @@ Shader "Justachae/ENVG/Outline"
             }
             ENDCG
         }
+
+        // 36: the heat picture followed in time, as the game's TAA follows its own picture. The scene is copied from a
+        // camera jittered by a sub-pixel each frame: the copy is shifted back, but which pixels an edge covers still
+        // changes from frame to frame (the game smooths that over frames for its picture, not for its buffers), so
+        // every edge of the heat flickered. Last frame's heat fetched from where the motion vectors say this point
+        // was, held within this frame's 3 x 3 neighbourhood (nothing new can be dragged along), blended in.
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragHeatTemporal
+            sampler2D _EnvgMotion;
+            sampler2D _EnvgHeatHistory;   // last frame's followed heat picture
+            float4 _EnvgHeatTemporal;     // x: the share of the history
+            float4 fragHeatTemporal(v2f i) : SV_Target
+            {
+                float2 t = _MainTex_TexelSize.xy;
+                float4 c = tex2D(_MainTex, i.uv);
+                float4 lo = c, hi = c;
+                [unroll] for (int y = -1; y <= 1; y++)
+                {
+                    [unroll] for (int x = -1; x <= 1; x++)
+                    {
+                        float4 v = tex2D(_MainTex, i.uv + float2(x, y) * t);
+                        lo = min(lo, v);
+                        hi = max(hi, v);
+                    }
+                }
+                float2 previous = toChainPrev(toScreen(i.uv) - tex2D(_EnvgMotion, i.uv).xy);
+                if (_EnvgHeatTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
+                    return c;
+                float4 h = clamp(tex2D(_EnvgHeatHistory, previous), lo, hi);
+                return lerp(c, h, _EnvgHeatTemporal.x);
+            }
+            ENDCG
+        }
     }
 }
