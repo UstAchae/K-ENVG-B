@@ -35,7 +35,7 @@ public record ModMetadata : IModMetadata
 [Injectable(InjectionType.Transient, TypePriority = OnLoadOrder.Preload + 50000)]
 public class EnvgbMod(
     ISptLogger<EnvgbMod> logger, ModHelper modHelper, CustomItemService customItemService,
-    TemplateTable templateTable, TradersTable tradersTable
+    TemplateTable templateTable, TradersTable tradersTable, LocaleTable localeTable
 ) : IOnLoad
 {
     public Task OnLoadAsync(CancellationToken cancellationToken)
@@ -50,6 +50,12 @@ public class EnvgbMod(
             return Task.CompletedTask;
         }
         string sourceJson = JsonSerializer.Serialize(source, options);
+        // The eyecup slot's name in the item screens (slot names are global locale keys in upper case, as MOD_NVG).
+        foreach (var (lang, table) in localeTable.Global)
+        {
+            string label = lang == "ch" ? "眼罩" : "EYECUP";
+            table.AddTransformer(d => { if (d is not null) d["MOD_EYECUP"] = label; return d; });
+        }
         // The removable eyecup pairs first (db "eyecups"), so the ENVG-B's mod_eyecup slot can take them.
         var eyecups = new List<MongoId>();
         var eyecupDb = db["eyecups"]!.AsObject();
