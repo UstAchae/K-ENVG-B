@@ -1452,10 +1452,13 @@ Shader "Justachae/ENVG/Outline"
                 float4 s = tex2D(_MainTex, i.uv);
                 float total = 1.0;
                 int r = (int)_EnvgWide.y;
-                [loop] for (int n = 1; n <= r; n++)
+                // two texels at a time through the bilinear filter, as pass 33 (their depth read the same way: on one
+                // surface it is theirs, across an edge the pair counts in part)
+                [loop] for (int n = 1; n <= r; n += 2)
                 {
-                    float w = exp(k * n * n);
-                    float2 o = _EnvgWide.zw * n;
+                    float wa = exp(k * n * n), wb = exp(k * (n + 1) * (n + 1));
+                    float w = wa + wb;
+                    float2 o = _EnvgWide.zw * ((n * wa + (n + 1) * wb) / w);
                     float a = w * saturate(1.0 - abs(tex2D(_EnvgDepth, i.uv + o).r - d0) / tol);
                     float b = w * saturate(1.0 - abs(tex2D(_EnvgDepth, i.uv - o).r - d0) / tol);
                     s += tex2D(_MainTex, i.uv + o) * a + tex2D(_MainTex, i.uv - o) * b;
