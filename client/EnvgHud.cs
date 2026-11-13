@@ -22,6 +22,12 @@ internal static class EnvgHud
     private static readonly List<Vector3> _pos = new List<Vector3>(2048);
     private static readonly List<Vector2> _uv = new List<Vector2>(2048), _aux = new List<Vector2>(2048);
     private static readonly List<int> _tris = new List<int>(3072);
+    private static readonly List<Color32> _tint = new List<Color32>(2048);
+    // the symbology's own colour (alpha 0); the battery's cells green, as the device shows its charge
+    private static readonly Color32 Own = new Color32(0, 0, 0, 0), Charge = new Color32(70, 255, 60, 255);
+    private static Color32 _paint = Own;
+    // an italic face drawn upright: each glyph's top shifted back by its slant
+    private static float _unslant;
     private static readonly char[] _buf = new char[48];
     private static int _layerMask = -1;
     private static float _range = -1f;
@@ -72,8 +78,10 @@ internal static class EnvgHud
                 }
             }
             _font = best;
+            // an italic face (when the game has no upright one): about 12 degrees of slant taken back
+            _unslant = _font != null && (_font.name.ToLowerInvariant().Contains("italic") || _font.name.ToLowerInvariant().Contains("oblique")) ? 0.21f : 0f;
             EnvgFusionPlugin.Log?.LogInfo(_font != null
-                ? "ENVG symbology font: " + _font.name + " (" + bestScore / 10 + " of " + Chars.Length + " glyphs, padding " + _font.atlasPadding + ", " + _font.atlasRenderMode + ", point size " + _font.faceInfo.pointSize + ")"
+                ? "ENVG symbology font: " + _font.name + " (" + bestScore / 10 + " of " + Chars.Length + " glyphs, padding " + _font.atlasPadding + ", " + _font.atlasRenderMode + ", point size " + _font.faceInfo.pointSize + (_unslant > 0f ? ", italic drawn upright" : "") + ")"
                 : "ENVG symbology: no TextMeshPro font found, no symbology");
         }
         catch (System.Exception e)
@@ -126,7 +134,8 @@ internal static class EnvgHud
             return;
         _mesh ??= new Mesh { name = "Justachae ENVG symbology" };
         _mesh.MarkDynamic();
-        _pos.Clear(); _uv.Clear(); _aux.Clear(); _tris.Clear();
+        _pos.Clear(); _uv.Clear(); _aux.Clear(); _tris.Clear(); _tint.Clear();
+        _paint = Own;
         float w = dest.width, h = dest.height;
         float ts = Mathf.Max(10f, 0.052f * 2f * half.y);   // the text's em, in pixels
         float left = centre.x - half.x + 0.8f * ts, right = centre.x + half.x - 0.8f * ts;
@@ -161,7 +170,7 @@ internal static class EnvgHud
         Put(" Z", ref n);
         Text(_buf, n, right, top1, ts, 1f);
         n = 0;
-        Put(mode == EnvgFusionPlugin.ShowI2 ? "I2" : "FUSED", ref n);
+        Put("FUSED", ref n);
         Text(_buf, n, right, top2, ts, 1f);
 
         // top centre: heading over the compass tape (north along the world's +z, as the game's compass)
@@ -200,7 +209,7 @@ internal static class EnvgHud
         // bottom centre: the display mode
         float bottom = centre.y - half.y + 0.75f * ts;
         n = 0;
-        Put(mode == EnvgFusionPlugin.ShowOutline ? "OUTLINE" : mode == EnvgFusionPlugin.ShowFusion ? "WHITE HOT" : mode == EnvgFusionPlugin.ShowBlackHot ? "BLACK HOT" : mode == EnvgFusionPlugin.ShowI2 ? "I2 ONLY" : "THERMAL", ref n);
+        Put(mode == EnvgFusionPlugin.ShowOutline ? "OUTLINE" : mode == EnvgFusionPlugin.ShowFusion ? "WHITE HOT" : mode == EnvgFusionPlugin.ShowBlackHot ? "BLACK HOT" : "THERMAL", ref n);
         Text(_buf, n, centre.x, bottom, ts, 0.5f);
 
         // bottom left: the battery (full)
@@ -210,8 +219,10 @@ internal static class EnvgHud
         Box(bx - bw, by, line * 0.5f, bh, 0.3f * ts);
         Box(bx + bw, by, line * 0.5f, bh, 0.3f * ts);
         Box(bx - bw - 0.12f * ts, by, 0.12f * ts, 0.2f * ts, 0.3f * ts);
+        _paint = Charge;
         for (int k = 0; k < 4; k++)
             Box(bx - bw + (k + 0.5f) * (2f * bw / 4f), by, 0.18f * ts, bh - 0.16f * ts, 0.3f * ts);
+        _paint = Own;
 
         // into clip space (upside down where a texture's first row is its top)
         float flip = SystemInfo.graphicsUVStartsAtTop ? -1f : 1f;
@@ -224,6 +235,7 @@ internal static class EnvgHud
         _mesh.SetVertices(_pos);
         _mesh.SetUVs(0, _uv);
         _mesh.SetUVs(1, _aux);
+        _mesh.SetColors(_tint);
         _mesh.SetTriangles(_tris, 0, false);
         _mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 4f);
 
@@ -269,10 +281,12 @@ internal static class EnvgHud
                 float y0 = y1 - (r.height + 2f * pad) * scale;
                 float u0 = (r.x - pad) / aw, v0 = (r.y - pad) / ah, u1 = (r.x + r.width + pad) / aw, v1 = (r.y + r.height + pad) / ah;
                 int b = _pos.Count;
-                _pos.Add(new Vector3(x0, y0, 0f)); _uv.Add(new Vector2(u0, v0)); _aux.Add(new Vector2(scale, 0f));
-                _pos.Add(new Vector3(x0, y1, 0f)); _uv.Add(new Vector2(u0, v1)); _aux.Add(new Vector2(scale, 0f));
-                _pos.Add(new Vector3(x1, y1, 0f)); _uv.Add(new Vector2(u1, v1)); _aux.Add(new Vector2(scale, 0f));
-                _pos.Add(new Vector3(x1, y0, 0f)); _uv.Add(new Vector2(u1, v0)); _aux.Add(new Vector2(scale, 0f));
+                float s0 = (y0 - y) * _unslant, s1 = (y1 - y) * _unslant;
+                _pos.Add(new Vector3(x0 - s0, y0, 0f)); _uv.Add(new Vector2(u0, v0)); _aux.Add(new Vector2(scale, 0f));
+                _pos.Add(new Vector3(x0 - s1, y1, 0f)); _uv.Add(new Vector2(u0, v1)); _aux.Add(new Vector2(scale, 0f));
+                _pos.Add(new Vector3(x1 - s1, y1, 0f)); _uv.Add(new Vector2(u1, v1)); _aux.Add(new Vector2(scale, 0f));
+                _pos.Add(new Vector3(x1 - s0, y0, 0f)); _uv.Add(new Vector2(u1, v0)); _aux.Add(new Vector2(scale, 0f));
+                _tint.Add(_paint); _tint.Add(_paint); _tint.Add(_paint); _tint.Add(_paint);
                 _tris.Add(b); _tris.Add(b + 1); _tris.Add(b + 2); _tris.Add(b); _tris.Add(b + 2); _tris.Add(b + 3);
             }
             pen += gm.horizontalAdvance * scale;
@@ -288,6 +302,7 @@ internal static class EnvgHud
         _pos.Add(new Vector3(cx - ex, cy + ey, 1f + glow)); _uv.Add(new Vector2(-ex, ey)); _aux.Add(new Vector2(hx, hy));
         _pos.Add(new Vector3(cx + ex, cy + ey, 1f + glow)); _uv.Add(new Vector2(ex, ey)); _aux.Add(new Vector2(hx, hy));
         _pos.Add(new Vector3(cx + ex, cy - ey, 1f + glow)); _uv.Add(new Vector2(ex, -ey)); _aux.Add(new Vector2(hx, hy));
+        _tint.Add(_paint); _tint.Add(_paint); _tint.Add(_paint); _tint.Add(_paint);
         _tris.Add(b); _tris.Add(b + 1); _tris.Add(b + 2); _tris.Add(b); _tris.Add(b + 2); _tris.Add(b + 3);
     }
 

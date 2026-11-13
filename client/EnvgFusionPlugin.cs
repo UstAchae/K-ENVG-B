@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.54.3";
+    public const string Version = "0.55.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -40,8 +40,6 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
     // the device's four modes, in the order the arrow keys step through them
     internal static readonly string[] Modes = { ShowI2, ShowOutline, ShowFusion, ShowBlackHot };
     internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? NextMode, PreviousMode;
-    private static float _modeShownUntil;
-    private static GUIStyle? _modeStyle;
 
     private void Awake()
     {
@@ -68,7 +66,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         Amount = Config.Bind(Section, "轮廓多少", 1f,
             new ConfigDescription("画多少线：越大，越弱的边缘也画出来（更多细纹）；越小，只剩明显的轮廓。", new AcceptableValueRange<float>(0f, 1f), new ConfigurationManagerAttributes { Order = 7 }));
         Symbology = Config.Bind(Section, "目镜显示信息", true,
-            new ConfigDescription("目镜热像框里的设备信息（青色发光）：坐标、测距、方位刻度、时间（Zulu）、电池、显示模式。只在 K-3PS-C 目镜显示 ENVG-B 时出现。", null, new ConfigurationManagerAttributes { Order = 5 }));
+            new ConfigDescription("目镜热像框里的设备信息（青色发光）：坐标、测距、方位刻度、时间（Zulu）、电池、显示模式。只在 K-3PS-C 目镜显示 ENVG-B 的热像时出现（纯夜视模式不显示）。", null, new ConfigurationManagerAttributes { Order = 5 }));
         WhitePhosphor = Config.Bind(Section, "白磷夜视", true,
             new ConfigDescription("夜视画面换成白磷管（蓝白色）。戴着游戏里的夜视仪并打开时，用那台夜视仪自己的画面。", null, new ConfigurationManagerAttributes { Order = 6 }));
         TubeBrightness = Config.Bind(Section, "夜视亮度", 1f,
@@ -165,25 +163,12 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
                 int at = System.Array.IndexOf(Modes, Show.Value);
                 at = at < 0 ? 1 : (at + step + Modes.Length) % Modes.Length;
                 Show.Value = Modes[at];
-                _modeShownUntil = Time.unscaledTime + 1.5f;
                 EnvgFusion.ModeChanged();
             }
         }
         EnvgFusion.Update();
     }
 
-    // the mode's name, briefly, at the top of the screen
-    private void OnGUI()
-    {
-        if (Time.unscaledTime > _modeShownUntil || Show == null)
-            return;
-        // in K-3PS-C's eyepieces the device's own symbology shows the mode
-        if (Symbology?.Value == true && EyepieceLink.ClaimedRecently)
-            return;
-        _modeStyle ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 22, fontStyle = FontStyle.Bold };
-        _modeStyle.normal.textColor = new Color(1f, 0.75f, 0.45f, Mathf.Clamp01((_modeShownUntil - Time.unscaledTime) / 0.4f));
-        GUI.Label(new Rect(0f, Screen.height * 0.08f, Screen.width, 40f), "ENVG-B  " + Show.Value, _modeStyle);
-    }
     private void LateUpdate() => EnvgFusion.SetWhitePhosphor();
 
     // every plugin's assembly is loaded by now: K-3PS-C's eyepieces, if it is there
@@ -794,13 +779,11 @@ internal static class EnvgFusion
     private static readonly int FieldAtId = Shader.PropertyToID("_EnvgFieldAt");
     internal static bool FuseInto(RenderTexture i2, RenderTexture dest)
     {
-        if (Active && _main != null && Material != null && EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2)
-            return SymbologyOnly(i2, dest);
         if (!Active || _main == null || _overlayDraw == null || Material == null || Edges == null || Picture == null || Ridge == null)
             return false;
         string show = EnvgFusionPlugin.Show?.Value ?? EnvgFusionPlugin.ShowOutline;
         if (show == EnvgFusionPlugin.ShowI2)
-            return SymbologyOnly(i2, dest);
+            return false;
         if (_fusedFrame != Time.frameCount)
         {
             // the chain and the latency ring move on once a frame, however many times the eyepieces ask
@@ -878,22 +861,6 @@ internal static class EnvgFusion
         EnvgHud.Draw(cb, Material, _main, dest, centre, half, new Vector2(at.x, at.y), show, settled);
     }
 
-    // the plain tubes' mode: no thermal picture, the symbology alone over the tube's
-    private static bool SymbologyOnly(RenderTexture i2, RenderTexture dest)
-    {
-        if (EnvgFusionPlugin.Symbology?.Value != true || Material == null)
-            return false;
-        Vector4 at = EyepieceLink.FieldInMainUv;
-        float settled = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.85f, 1f, EyepieceLink.Deployed));
-        _fuseDraw ??= new CommandBuffer { name = "Justachae ENVG into the eyepieces" };
-        _fuseDraw.Clear();
-        _fuseDraw.Blit(i2, dest);
-        _fuseDraw.SetRenderTarget(dest);
-        _fuseDraw.SetViewport(new Rect(0f, 0f, dest.width, dest.height));
-        Symbology(_fuseDraw, dest, at, EnvgFusionPlugin.ShowI2, settled);
-        Graphics.ExecuteCommandBuffer(_fuseDraw);
-        return true;
-    }
 
 
     private const float LensLeftOfRightEye = -0.0285f;

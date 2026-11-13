@@ -1493,8 +1493,8 @@ Shader "Justachae/ENVG/Outline"
             float4 _EnvgHudSdf;    // x: atlas texels of distance per unit of alpha
             float4 _EnvgHudCore;   // rgb: the core's colour, w: the glow's width (pixels)
             float4 _EnvgHudGlow;   // rgb: the glow's colour, a: its strength
-            struct hudIn { float4 vertex : POSITION; float2 uv : TEXCOORD0; float2 aux : TEXCOORD1; };
-            struct hudV { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; float2 aux : TEXCOORD1; float kind : TEXCOORD2; };
+            struct hudIn { float4 vertex : POSITION; float2 uv : TEXCOORD0; float2 aux : TEXCOORD1; float4 tint : COLOR; };
+            struct hudV { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; float2 aux : TEXCOORD1; float kind : TEXCOORD2; float4 tint : TEXCOORD3; };
             hudV vertHud(hudIn v)
             {
                 hudV o;
@@ -1502,6 +1502,7 @@ Shader "Justachae/ENVG/Outline"
                 o.uv = v.uv;
                 o.aux = v.aux;
                 o.kind = v.vertex.z;
+                o.tint = v.tint;
                 return o;
             }
             float4 fragHud(hudV i) : SV_Target
@@ -1523,7 +1524,11 @@ Shader "Justachae/ENVG/Outline"
                 float beyond = saturate(-sd / max(reach, 0.5));
                 float fall = exp(-max(-sd, 0.0) / max(_EnvgHudCore.w, 0.5)) * (1.0 - beyond) * (1.0 - beyond);
                 float glow = fall * (1.0 - core) * _EnvgHudGlow.a;
-                return float4(_EnvgHudCore.rgb * core + _EnvgHudGlow.rgb * glow, 1);
+                // the symbology's own cyan, or a shape's own colour (alpha 1: the battery's green cells)
+                float strength = max(max(_EnvgHudCore.r, _EnvgHudCore.g), _EnvgHudCore.b);
+                float3 coreCol = i.tint.a > 0.5 ? i.tint.rgb * strength : _EnvgHudCore.rgb;
+                float3 glowCol = i.tint.a > 0.5 ? i.tint.rgb * 0.6 * strength : _EnvgHudGlow.rgb;
+                return float4(coreCol * core + glowCol * glow, 1);
             }
             ENDCG
         }
