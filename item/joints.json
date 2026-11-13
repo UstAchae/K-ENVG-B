@@ -1,6 +1,22 @@
 {
  "nodes": [
   {
+   "name": "nvg_envgb_psq42_battery_LOD0",
+   "parent": "",
+   "pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rot": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "mesh": "nvg_envgb_psq42_battery_LOD0"
+  },
+  {
    "name": "nvg_envgb_psq42_mount_LOD0",
    "parent": "",
    "pos": [
