@@ -68,10 +68,12 @@ public class EnvgbMod(
             // The game's own night vision when nothing else draws it: round binocular field, white phosphor.
             props["Mask"] = "Binocular";
             props["MaskSize"] = 0.96;
-            // White phosphor (P45) reads blue-white. L3Harris ENVG-B footage: bright areas (203-232, 236-254, 255), dark areas
-            // much bluer (77, 173, 255). (196, 230, 255) matched the bright areas but still read grey to the user (the game
-            // material only multiplies, so shadows cannot be made bluer than highlights); one step bluer overall.
-            props["Color"] = new JsonObject { ["r"] = 165, ["g"] = 210, ["b"] = 255, ["a"] = 254 };
+            // White phosphor (P45), blue-white. The look the user picked as the target (a white-phosphor tube in another mod)
+            // keeps one hue from shadows to highlights, R:G:B 0.61:0.85:1, at a mean brightness 0.41x ours: with the
+            // GPNVG-18's gain (2.27) our highlights clipped to white (0.91:0.98:1) and the tint was lost. Hue and gain set to
+            // match; both are only measured from screenshots.
+            props["Color"] = new JsonObject { ["r"] = 156, ["g"] = 217, ["b"] = 255, ["a"] = 254 };
+            props["Intensity"] = 1.4;
             var template = JsonSerializer.Deserialize<TemplateItem>(node, options)
                 ?? throw new InvalidOperationException("ENVG-B template did not deserialize");
 
