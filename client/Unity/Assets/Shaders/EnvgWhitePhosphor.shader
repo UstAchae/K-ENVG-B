@@ -68,10 +68,11 @@ Shader "Justachae/ENVG/WhitePhosphor"
 
                 // the tube's own faint background glow (equivalent background input) keeps black from being black
                 float o = max(sig + noise, 0) + 0.006;
-                // P45 white phosphor: its emission seen as a cool blue-white, the device's own colour (165, 210, 255 in
-                // the item, from the maker's footage), here in linear, green kept at the signal
-                const float3 p45 = float3(0.376, 0.644, 1.0);
-                return float4(o * p45 / 0.644, 1);
+                // P45 white phosphor: one colour from the darks to the brightest (display 0.61 : 0.85 : 1, as the item's
+                // 156, 217, 255), here in linear with blue the largest, so even a saturated pixel keeps the colour instead
+                // of going white; times 0.62, the item's brightness (1.4 against the GPNVG-18's 2.27)
+                const float3 p45 = float3(0.333, 0.694, 1.0) * 0.62;
+                return float4(o * p45, 1);
             }
             ENDCG
         }
