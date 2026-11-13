@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.50.0";
+    public const string Version = "0.50.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -101,7 +101,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         ResidualHeat = Config.Bind(Advanced, "材质余热（°C）", 4f,
             new ConfigDescription("白天存下的热：深色、厚重的表面（石头、土、树干、水泥）夜里比空气暖。按几像素内平均的颜色算，不会画出贴图花纹。", new AcceptableValueRange<float>(0f, 15f), advanced));
         ThermalField = Config.Bind(Advanced, "热像视场（相对夜视管）", 1f,
-            new ConfigDescription("热像画面是夜视管圆形视野里的一个 4:3 矩形：1 是矩形的对角线等于夜视管视野的直径（屏幕高度），更小则更小。矩形外只有夜视画面。0 是铺满全屏。", new AcceptableValueRange<float>(0f, 1.5f), advanced));
+            new ConfigDescription("热像画面是夜视管圆形视野里的一个 4:3 矩形：1 是真机的比例：宽为夜视管视野直径的 0.68、高 0.52。矩形外只有夜视画面。0 是铺满全屏。", new AcceptableValueRange<float>(0f, 1.5f), advanced));
         Latency = Config.Bind(Advanced, "热像延迟（毫秒）", 40f,
             new ConfigDescription("非制冷热像探测器加数字处理和显示的延迟：转头时轮廓比夜视画面慢这么多。0 是不延迟。", new AcceptableValueRange<float>(0f, 60f), advanced));
         MinSpread = Config.Bind(Advanced, "热像增益上限（°C）", 3f,
@@ -334,8 +334,8 @@ internal static class EnvgFusion
     private static void SetFieldAndParallax(int width, int height)
     {
         float field = EnvgFusionPlugin.ThermalField?.Value ?? 1f;
-        // a 4:3 rectangle whose diagonal is the field times the tubes' circle (the screen's height): half sizes in uv
-        float halfH = 0.3f * field, halfW = 0.4f * field * height / Mathf.Max(width, 1);
+        // the real device's rectangle: 0.68 of the tubes' circle (the screen's height) wide, 0.52 high, times the field: half sizes in uv
+        float halfH = 0.26f * field, halfW = 0.34f * field * height / Mathf.Max(width, 1);
         Material!.SetVector(FieldId, new Vector4(halfW, halfH, 4f / Mathf.Max(height, 1), field > 0f ? 1f : 0f));
         Material.SetVector(FieldAtId, Vector4.zero);
         float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
@@ -775,11 +775,12 @@ internal static class EnvgFusion
         float washout = EnvgFusionPlugin.Washout?.Value ?? 1f;
         Material.SetTexture(SceneUnderId, i2);
         Material.SetVector(WashoutId, new Vector4(washout, 0f, 0f, 0f));
-        // the thermal rectangle (4:3, its diagonal the set share of the tubes' circle) around the tubes' axis
+        // the thermal rectangle around the tubes' axis, as the real device shows it: 0.68 of the tube's circle wide and
+        // 0.52 of it high (measured on the maker's picture through the eyepiece), times the set share
         Vector4 at = EyepieceLink.FieldInMainUv;
         float radius = Mathf.Max(at.z, 1e-3f), aspect = Mathf.Max(at.w, 1e-3f);
         float share = EnvgFusionPlugin.ThermalField?.Value ?? 1f;
-        Material.SetVector(FieldId, new Vector4(0.8f * radius * share / aspect, 0.6f * radius * share, 4f / Mathf.Max(dest.height, 1), share > 0f ? 1f : 0f));
+        Material.SetVector(FieldId, new Vector4(0.68f * radius * share / aspect, 0.52f * radius * share, 4f / Mathf.Max(dest.height, 1), share > 0f ? 1f : 0f));
         float settled = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.85f, 1f, EyepieceLink.Deployed));
         Material.SetVector(FieldAtId, new Vector4(at.x, at.y, settled, 1f));
         float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
