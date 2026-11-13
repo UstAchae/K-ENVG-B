@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.54.1";
+    public const string Version = "0.54.2";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -176,6 +176,9 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
     private void OnGUI()
     {
         if (Time.unscaledTime > _modeShownUntil || Show == null)
+            return;
+        // in K-3PS-C's eyepieces the device's own symbology shows the mode
+        if (Symbology?.Value == true && EyepieceLink.ClaimedRecently)
             return;
         _modeStyle ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 22, fontStyle = FontStyle.Bold };
         _modeStyle.normal.textColor = new Color(1f, 0.75f, 0.45f, Mathf.Clamp01((_modeShownUntil - Time.unscaledTime) / 0.4f));
