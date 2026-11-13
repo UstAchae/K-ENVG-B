@@ -19,8 +19,14 @@ namespace EnvgFusion;
 // the log; nothing every frame.
 internal static class EnvgTiming
 {
-    internal const int Extra = 5;
-    private const float Warm = 3f, BaseTime = 5f, ItemTime = 1.5f, Settle = 0.3f, EndBase = 3f;
+    internal const int Extra = 8;
+    // each piece: 3 s of 0.2 s windows taking turns, run again / not, so the slow drift of the frame (the scene, the
+    // clocks) falls out of the difference between neighbouring windows; the first 2 frames of a window not counted
+    private const float Warm = 3f, BaseTime = 3f, ItemTime = 3f, SubTime = 0.2f, EndBase = 2f;
+    private const int SubSkip = 2;
+    private static bool _subOn;
+    private static float _subStart;
+    private static int _subFrames;
 
     private enum Phase { Waiting, Warm, Base, Items, EndBase, Done }
     private static Phase _phase = Phase.Waiting;
@@ -32,12 +38,19 @@ internal static class EnvgTiming
     internal const string FuseItem = "eyepiece draw (Fuse)", CopyItem = "scene copy + bodies (camera)", MotionItem = "motion copy (camera)", GrassItem = "grass mask (camera)";
     private static readonly List<string> _items = new List<string>();
     private static int _item = -1;
-    internal static string? Current => _phase == Phase.Items && _item >= 0 && _item < _items.Count && Time.unscaledTime - _phaseStart >= 0f ? _items[_item] : null;
+    internal static string? Current => _phase == Phase.Items && _subOn && _item >= 0 && _item < _items.Count ? _items[_item] : null;
 
     // frame times
-    private struct Acc { public double Sum; public double Max; public int N; public void Add(double v) { Sum += v; N++; if (v > Max) Max = v; } public double Avg => N > 0 ? Sum / N : 0; }
+    private struct Acc
+    {
+        public double Sum, Sq, Max; public int N;
+        public void Add(double v) { Sum += v; Sq += v * v; N++; if (v > Max) Max = v; }
+        public double Avg => N > 0 ? Sum / N : 0;
+        public double Var => N > 1 ? System.Math.Max(Sq / N - Avg * Avg, 0) * N / (N - 1) : 0;
+    }
     private static Acc _base, _endBase;
     private static readonly Dictionary<string, Acc> _itemFrames = new Dictionary<string, Acc>();
+    private static readonly Dictionary<string, Acc> _itemOff = new Dictionary<string, Acc>();
     private static readonly Dictionary<string, Acc> _gpu = new Dictionary<string, Acc>();
     private static readonly Dictionary<string, Acc> _cpu = new Dictionary<string, Acc>();
     private static readonly Dictionary<string, Acc> _alloc = new Dictionary<string, Acc>();
@@ -80,15 +93,19 @@ internal static class EnvgTiming
                 if (now - _phaseStart >= BaseTime) StartItems(now);
                 break;
             case Phase.Items:
-                if (now - _phaseStart >= Settle)
+            {
+                string name = _items[_item];
+                if (_subFrames++ >= SubSkip)
                 {
-                    string name = _items[_item];
-                    Acc a = _itemFrames.TryGetValue(name, out Acc x) ? x : default;
+                    Dictionary<string, Acc> into = _subOn ? _itemFrames : _itemOff;
+                    Acc a = into.TryGetValue(name, out Acc x) ? x : default;
                     a.Add(dt);
-                    _itemFrames[name] = a;
+                    into[name] = a;
                 }
-                if (now - _phaseStart >= ItemTime + Settle) NextItem(now);
+                if (now - _phaseStart >= ItemTime) NextItem(now);
+                else if (now - _subStart >= SubTime) Switch(!_subOn, now);
                 break;
+            }
             case Phase.EndBase:
                 _endBase.Add(dt);
                 if (now - _phaseStart >= EndBase) Finish();
@@ -100,7 +117,7 @@ internal static class EnvgTiming
     {
         _items.Clear();
         _items.AddRange(EnvgChain.GroupNames);
-        if (EyepieceLink.ClaimedNow) _items.Add(FuseItem);
+        if (EyepieceLink.ClaimedRecently) _items.Add(FuseItem);
         _items.Add(CopyItem);
         _items.Add(MotionItem);
         if (EnvgFusion.GrassMaskWanted) _items.Add(GrassItem);
@@ -120,14 +137,22 @@ internal static class EnvgTiming
             _endBase = default;
             return;
         }
+        Switch(true, now);
+    }
+
+    private static void Switch(bool on, float now)
+    {
+        _subOn = on;
+        _subStart = now;
+        _subFrames = 0;
         string name = _items[_item];
         if (name == CopyItem || name == MotionItem || name == GrassItem)
-            EnvgFusion.RepeatCameraBuffer(name, Extra);
+            EnvgFusion.RepeatCameraBuffer(name, on ? Extra : 0);
     }
 
     private static void Restore()
     {
-        if (_phase == Phase.Items && _item >= 0 && _item < _items.Count)
+        if (_phase == Phase.Items && _subOn && _item >= 0 && _item < _items.Count)
         {
             string name = _items[_item];
             if (name == CopyItem || name == MotionItem || name == GrassItem)
@@ -192,20 +217,22 @@ internal static class EnvgTiming
         _phase = Phase.Done;
         var sb = new StringBuilder();
         double b = _base.Avg, e = _endBase.Avg;
-        sb.Append("ENVG timing: mode ").Append(_mode).Append(", eyepieces ").Append(EyepieceLink.ClaimedNow ? "claimed" : "not claimed")
+        sb.Append("ENVG timing: mode ").Append(_mode).Append(", eyepieces ").Append(EyepieceLink.ClaimedRecently ? "claimed" : "not claimed")
           .Append(", screen ").Append(Screen.width).Append('x').Append(Screen.height)
           .Append(", baseline frame ").Append(b.ToString("F2")).Append(" ms avg (max ").Append(_base.Max.ToString("F1")).Append(", ").Append((1000.0 / Mathf.Max((float)b, 0.01f)).ToString("F0")).Append(" FPS), at the end ")
           .Append(e.ToString("F2")).Append(" ms; GPU recorder supported ").Append(SystemInfo.supportsGpuRecorder);
-        sb.Append("\nENVG timing: each piece run ").Append(Extra).Append(" more times a frame: frame avg -> cost of one run = (frame - baseline) / ").Append(Extra);
+        sb.Append("\nENVG timing: each piece run ").Append(Extra).Append(" more times a frame in 0.2 s windows taking turns with none: cost of one run = (frame with - frame without) / ").Append(Extra).Append(", +- its standard error");
         double sum = 0;
         foreach (string name in _items)
         {
-            if (!_itemFrames.TryGetValue(name, out Acc a))
+            if (!_itemFrames.TryGetValue(name, out Acc a) || !_itemOff.TryGetValue(name, out Acc o) || a.N < 2 || o.N < 2)
                 continue;
-            double cost = (a.Avg - (b + e) * 0.5) / Extra;
+            double cost = (a.Avg - o.Avg) / Extra;
+            double se = System.Math.Sqrt(a.Var / a.N + o.Var / o.N) / Extra;
             sum += System.Math.Max(cost, 0);
-            sb.Append("\nENVG timing:   ").Append(name).Append(": frame ").Append(a.Avg.ToString("F2")).Append(" ms (").Append(a.N).Append(" frames) -> ")
-              .Append(cost.ToString("F2")).Append(" ms");
+            sb.Append("\nENVG timing:   ").Append(name).Append(": frame ").Append(a.Avg.ToString("F2")).Append(" ms (").Append(a.N).Append(" frames) with, ")
+              .Append(o.Avg.ToString("F2")).Append(" ms (").Append(o.N).Append(") without -> ")
+              .Append(cost.ToString("F2")).Append(" +- ").Append(se.ToString("F2")).Append(" ms");
             if (_gpu.TryGetValue(name, out Acc g) && g.N > 0)
                 sb.Append(", recorder ").Append(g.Avg.ToString("F2")).Append(" ms");
         }
