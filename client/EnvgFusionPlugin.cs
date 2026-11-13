@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.51.1";
+    public const string Version = "0.51.2";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -145,6 +145,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         {
             Log.LogWarning("Patching the grass draw failed; no grass in the thermal picture: " + e.Message);
         }
+        EyecupSlotIcon.Patch(harmony);
         MethodInfo? nvPreCull = AccessTools.Method(typeof(BSG.CameraEffects.NightVision), "OnPreCull");
         if (nvPreCull != null)
             harmony.Patch(nvPreCull, postfix: new HarmonyMethod(typeof(EnvgFusion), nameof(EnvgFusion.AfterNightVisionPreCull)));
