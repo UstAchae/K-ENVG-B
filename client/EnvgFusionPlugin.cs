@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.53.0";
+    public const string Version = "0.53.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -229,16 +229,31 @@ internal static class EnvgFusion
     private static bool _loggedCrop;
     private const float CropMargin = 0.04f;   // uv of the screen's height, each side
 
+    // The crop's size in sensor pixels, kept while the eyepieces show the device: the field they report moves a little
+    // with the eye, and a crop a pixel larger or smaller re-made every texture of the chain (and dropped its history).
+    // It grows at once when more is needed and shrinks only when 15 percent too large.
+    private static int _cropW, _cropH;
+
     private static Vector4 CropFor(int fullWidth, int fullHeight)
     {
         if (!EyepieceLink.ClaimedRecently || Time.frameCount - _lastFieldFrame > 2 || _lastField.z <= 0f)
+        {
+            _cropW = _cropH = 0;
             return new Vector4(0f, 0f, 1f, 1f);
+        }
         Vector4 f = _lastField;
         float aspect = Mathf.Max(f.w, 1e-3f), share = EnvgFusionPlugin.ThermalField?.Value ?? 1f;
         if (share <= 0f)
             return new Vector4(0f, 0f, 1f, 1f);
         float halfH = 0.52f * f.z * share + CropMargin, halfW = (0.68f * f.z * share + CropMargin) / aspect;
-        int w = Mathf.Min(fullWidth, Mathf.CeilToInt(2f * halfW * fullWidth)), h = Mathf.Min(fullHeight, Mathf.CeilToInt(2f * halfH * fullHeight));
+        int needW = Mathf.Min(fullWidth, Mathf.CeilToInt(2f * halfW * fullWidth)), needH = Mathf.Min(fullHeight, Mathf.CeilToInt(2f * halfH * fullHeight));
+        if (needW > _cropW || needW < _cropW * 0.85f || _cropW > fullWidth)
+            _cropW = Mathf.Min(fullWidth, needW + 8);
+        if (needH > _cropH || needH < _cropH * 0.85f || _cropH > fullHeight)
+            _cropH = Mathf.Min(fullHeight, needH + 8);
+        int w = _cropW, h = _cropH;
+        halfW = 0.5f * w / fullWidth;
+        halfH = 0.5f * h / fullHeight;
         int x = Mathf.Clamp(Mathf.RoundToInt((f.x - halfW) * fullWidth), 0, fullWidth - w);
         int y = Mathf.Clamp(Mathf.RoundToInt((f.y - halfH) * fullHeight), 0, fullHeight - h);
         return new Vector4((float)x / fullWidth, (float)y / fullHeight, (float)w / fullWidth, (float)h / fullHeight);
