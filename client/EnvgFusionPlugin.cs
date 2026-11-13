@@ -90,7 +90,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("按传感器分辨率的几倍处理。1（默认）像真传感器，细碎的叶子平均成一团，线少而稳；2 细节多、线碎。", new AcceptableValueRange<int>(1, 2), advanced));
         Smoothing = Config.Bind(Advanced, "镜头模糊（像素）", 1f,
             new ConfigDescription("热像镜头的衍射模糊。越大只剩大的温差轮廓。", new AcceptableValueRange<float>(0f, 6f), advanced));
-        LensOffset = Config.Bind(Advanced, "热像镜头偏移（厘米）", 4f,
+        LensOffset = Config.Bind(Advanced, "热像镜头偏移（厘米）", 2.8f,
             new ConfigDescription("热像镜头在眼睛上方多远（近处轮廓会错开）。", new AcceptableValueRange<float>(0f, 10f), advanced));
         AirTemperature = Config.Bind(Advanced, "气温（°C）", 15f,
             new ConfigDescription("热像的基准温度。", new AcceptableValueRange<float>(-30f, 45f), advanced));
@@ -338,7 +338,7 @@ internal static class EnvgFusion
         float halfH = 0.3f * field, halfW = 0.4f * field * height / Mathf.Max(width, 1);
         Material!.SetVector(FieldId, new Vector4(halfW, halfH, 4f / Mathf.Max(height, 1), field > 0f ? 1f : 0f));
         Material.SetVector(FieldAtId, Vector4.zero);
-        float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 4f) * 0.01f;
+        float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
         Material.SetVector(ParallaxId, new Vector4(lens, 0.5f / Mathf.Max(_tan.y, 1e-4f), 0f, 0f));
     }
 
@@ -782,7 +782,7 @@ internal static class EnvgFusion
         Material.SetVector(FieldId, new Vector4(0.8f * radius * share / aspect, 0.6f * radius * share, 4f / Mathf.Max(dest.height, 1), share > 0f ? 1f : 0f));
         float settled = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.85f, 1f, EyepieceLink.Deployed));
         Material.SetVector(FieldAtId, new Vector4(at.x, at.y, settled, 1f));
-        float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 4f) * 0.01f;
+        float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
         Material.SetVector(ParallaxId, new Vector4(lens, 0.5f / Mathf.Max(_tan.y, 1e-4f), 0f, 0f));
         int pass = show == EnvgFusionPlugin.ShowThermal ? 15 : show == EnvgFusionPlugin.ShowGeometry ? 17 : show == EnvgFusionPlugin.ShowNormals ? 4
             : show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
