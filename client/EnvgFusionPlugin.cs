@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.50.1";
+    public const string Version = "0.50.2";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -568,6 +568,8 @@ internal static class EnvgFusion
                     }
                 }
                 _envgbDown = _lastIsEnvgb && (nv.Togglable == null || nv.Togglable.On);
+                if (_lastIsEnvgb && player != null)
+                    EnvgPlaceLog.Seen(player, _envgbDown);
             }
             catch (System.Exception)
             {
