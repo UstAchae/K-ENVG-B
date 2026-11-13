@@ -30,6 +30,11 @@ THERMAL_WINDOW = 'Opacity_Mid'
 # Where the eyecup rims go: the GPNVG-18's eyecups, midway between its eyes (x 0), plate top y 0.0505, z -0.0757.
 # Each colour sits elsewhere in the FBX (side by side), so the offset is measured per colour from its eyecups.
 EYES = np.array([0.0, 0.0505, -0.0757])
+# The flipping device then moves 20 mm further toward the face (+Y), so the deep eyecups' lips meet the face as the
+# N-15's do (glass 33.5 mm under the lip, lip at y ~0.07, eye relief ~35 mm; measured for K-3PS-C). The shroud
+# adapter (Mount_01) stays on the GPNVG-18's shroud interface: the arm slides 20 mm in it, as the real mount's
+# fore-aft adjustment does.
+DEVICE_SHIFT = np.array([0.0, 0.020, 0.0])
 AXIS_POS = np.array([-0.000388, -0.032200, 0.045600])  # GPNVG-18 "axis" localPosition
 AXIS_ROT = (-0.4786032, 0.0, 0.0, 0.8780313)  # its deployed rotation (CurveRotator.OnRotation, sign flipped)
 TEX_SIZE = 2048
@@ -58,6 +63,7 @@ def load(parts, colour, names, root_frame=False):
     for n in names:
         d = np.load(parts / f'AN-PSQ-42_{colour}_{n}.npz')
         p, nr = mirror(d['pos']) + off, mirror(d['nor'])
+        if not root_frame: p = p + DEVICE_SHIFT
         if root_frame:
             R = qmat(AXIS_ROT); p = AXIS_POS + p @ R.T; nr = nr @ R.T
         # The mirror reverses the winding: swap two corners of every triangle.
