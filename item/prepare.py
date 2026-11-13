@@ -25,6 +25,7 @@ ITEM = Path(__file__).resolve().parent
 UNITY = ITEM / 'Unity/Assets/Source'
 COLOURS = ('Black', 'Tan')
 DEVICE = ['Tube_R', 'Tube_L', 'Eyecup_R', 'Eyecup_L', 'Bridge', 'Mount_02', 'Mount_03', 'Mount_04', 'Mount_05']
+BODY = ['Tube_R', 'Tube_L', 'Eyecup_R', 'Eyecup_L', 'Bridge']  # the device node's own mesh (the mount is jointed)
 GLASS = ['Opacity_R', 'Opacity_L', 'Opacity_Mid', 'Opacity_Top']
 MOUNT = ['Mount_01']
 THERMAL_WINDOW = 'Opacity_Mid'
@@ -36,15 +37,28 @@ AXIS_ROT = (-0.4786032, 0.0, 0.0, 0.8780313)  # its deployed rotation (CurveRota
 # GPNVG-18's CurveRotator quaternions as stored (deployed, flipped up); the ENVG-B flips by the same turn.
 GP_ON = (0.47860321, -5.5665769e-08, 1.9227921e-08, -0.87803131)
 GP_OFF = (0.98575121, -3.6230801e-08, -4.6429719e-08, 0.16821051)
-# Seating on the helmet. The prefab root sits on the helmet's mod_nvg node, which lies on the front face of the NVG
-# shroud: in the root frame the shroud face is the plane z = 0 (the helmet behind it, z < 0) and +Y runs up it,
-# measured on the Ops-Core FAST with the GPNVG-18's G24 base, whose tongue enters the shroud at the origin. The
+# Seating on the helmet. The prefab root sits on the helmet's mod_nvg node (the game turns it a further +90 deg about
+# X there, as for every NVG; seen in game on the FLUX), which lies on the front face of the NVG shroud: in the root
+# frame the shroud face is the plane z = 0 (the helmet behind it, z < 0) and +Y runs up it, checked on the FLUX with
+# the GPNVG-18's G24 base, whose back sits flat on that face at the origin. The
 # ENVG-B's shroud plate (Mount_01, a flat plate) is turned about X until it lies parallel to that face, its centre
 # put on the slot's centre line at PLATE_Y, and the whole ENVG-B moved with it as one rigid body, until its rearmost
 # point touches the shroud face. The device stays where the mount holds it (the eyecups no longer chase the GPNVG-18's
 # eyes; an adjustable mount can bring them to the eyes later).
 PLATE_Y = 0.005
 SEAT_GAP = 0.0005
+# Joints of the mount, for K-3PS-C's adjustments (its NightVisionMount): measured on the seated, deployed model in
+# the root frame. The flip hinge is the barrel between Mount_02 and Mount_03 (circle fit of Mount_03's eye, 0.14 mm
+# rms), the tilt pin the boss between Mount_03 and Mount_04 (fits of both, 0.5 mm rms), both along X. Mount_05 slides
+# in Mount_04's rail, which runs 6.6 deg off the optical axis.
+HINGE = np.array([-0.0002, 0.0075, 0.0325])
+TILT_PIN = np.array([-0.0002, -0.0088, 0.0650])
+RAIL = np.array([0.0, -0.519, 0.855])  # +Z of the slide node: along the rail, away from the face
+# Flip-up: the GPNVG-18's 142 deg about its own hinge laid the device onto the helmet top ("too far"); about the
+# ENVG-B's hinge 125 deg leaves it just above the helmet's front edge (about 6 mm clear on the FLUX).
+FLIP_DEG = 125.0
+SCREW = ['rod', 'knob', 'knob2']  # Mount_01's islands that turn with the height screw (by vertex count below)
+MOUNT01_ISLANDS = {518: 'plate', 227: 'rail', 69: 'rod', 108: 'knob', 60: 'knob2', 12: 'stop'}
 TEX_SIZE = 2048
 NORMAL_DX = False
 
@@ -165,36 +179,120 @@ def textures(tex, colour, out, shared):
     save('normal', normal)
 
 
+def mat2quat(R):
+    U, _, Vt = np.linalg.svd(R); R = U @ Vt  # remove float drift (the stored quaternions are unit only to ~1e-8)
+    w = np.sqrt(max(0.0, 1 + R[0, 0] + R[1, 1] + R[2, 2])) / 2
+    x = np.sqrt(max(0.0, 1 + R[0, 0] - R[1, 1] - R[2, 2])) / 2
+    y = np.sqrt(max(0.0, 1 - R[0, 0] + R[1, 1] - R[2, 2])) / 2
+    z = np.sqrt(max(0.0, 1 - R[0, 0] - R[1, 1] + R[2, 2])) / 2
+    x = np.copysign(x, R[2, 1] - R[1, 2]); y = np.copysign(y, R[0, 2] - R[2, 0]); z = np.copysign(z, R[1, 0] - R[0, 1])
+    q = np.array([x, y, z, w]); q /= np.linalg.norm(q)
+    assert np.allclose(qmat(q), R, atol=1e-6)
+    return q
+
+
+def frame(along, axis):
+    """Rotation whose local `axis` ('x', 'y' or 'z') points along `along`, keeping X lateral (root X) where it can."""
+    along = along / np.linalg.norm(along)
+    if axis == 'x': return np.eye(3)  # the pins run along root X already
+    lat = np.array([1.0, 0, 0]); lat = lat - (lat @ along) * along; lat /= np.linalg.norm(lat)
+    if axis == 'y': return np.column_stack([lat, along, np.cross(lat, along)])
+    return np.column_stack([lat, np.cross(along, lat), along])
+
+
+def islands(p):
+    """Triangle labels of the separate mesh islands (corners shared by position)."""
+    key = np.round(p * 1e5).astype(np.int64)
+    _, inv = np.unique(key, axis=0, return_inverse=True); inv = inv.ravel()
+    par = np.arange(inv.max() + 1)
+    def find(x):
+        while par[x] != x: par[x] = par[par[x]]; x = par[x]
+        return x
+    for t in inv.reshape(-1, 3):
+        r = find(t[0])
+        for c in t[1:]: par[find(c)] = r
+    return np.array([find(i) for i in inv[::3]])
+
+
+def rig(parts, colour, out):
+    """The jointed prefab: nodes with their rest (deployed, seated) poses in the parent's frame and their meshes in
+    their own frame, written for EnvgbBuilder as rig.json and <node>.bin. Returns the joint list for K-3PS-C."""
+    Rs, ts, a = seat_for(parts, colour)
+    Ron = qmat(AXIS_ROT)
+    Rdev = Rs @ Ron                                   # the device (and the deployed arm) in the root frame
+    def seated(p): return (p @ Ron.T + AXIS_POS) @ Rs.T + ts   # device-frame points -> root frame
+    # Mount_01's islands: the plate, rail and stop stay; rod and knobs turn with the height screw.
+    m1 = load(parts, colour, MOUNT, root_frame=True, seat=(Rs, ts))
+    lab = islands(m1[0]); tri_lab = np.repeat(lab, 3)
+    counts = {l: len(np.unique(m1[0][tri_lab == l].round(6), axis=0)) for l in np.unique(lab)}
+    names = {l: MOUNT01_ISLANDS[c] for l, c in counts.items()}
+    screw_m = np.isin(tri_lab, [l for l, n in names.items() if n in SCREW])
+    rod = m1[0][tri_lab == [l for l, n in names.items() if n == 'rod'][0]]
+    rod_dir = np.linalg.svd(rod - rod.mean(0))[2][0]; rod_dir = rod_dir if rod_dir[1] > 0 else -rod_dir
+    rail_isl = m1[0][tri_lab == [l for l, n in names.items() if n == 'rail'][0]]
+    up = np.linalg.svd(rail_isl - rail_isl.mean(0))[2][0]; up = up if up[1] > 0 else -up
+    # World (root-frame) rest poses: (R, t).
+    W = {'nvg_envgb_psq42_mount_LOD0': (np.eye(3), np.zeros(3)),
+         'envgb_height_screw': (frame(rod_dir, 'y'), rod.mean(0)),
+         'envgb_carriage': (np.eye(3), HINGE),
+         'axis': (Rdev, HINGE),
+         'envgb_arm': (Rdev, HINGE),
+         'envgb_tilt': (Rdev, TILT_PIN),
+         'envgb_bracket': (Rdev, TILT_PIN)}
+    m5 = load(parts, colour, ['Mount_05'])[0]
+    W['envgb_slide'] = (frame(RAIL, 'z'), seated((m5.min(0) + m5.max(0)) / 2))
+    W['nvg_envgb_psq42_LOD0'] = (Rdev, seated(np.zeros(3)))
+    parent = {'nvg_envgb_psq42_mount_LOD0': None, 'envgb_height_screw': 'nvg_envgb_psq42_mount_LOD0',
+              'envgb_carriage': 'nvg_envgb_psq42_mount_LOD0', 'axis': 'envgb_carriage', 'envgb_arm': 'axis',
+              'envgb_tilt': 'envgb_arm', 'envgb_bracket': 'envgb_tilt', 'envgb_slide': 'envgb_bracket',
+              'nvg_envgb_psq42_LOD0': 'envgb_slide'}
+    # Meshes, as root-frame points.
+    def dev_parts(names):
+        p, n, u = load(parts, colour, names); return seated(p), n @ Rdev.T, u
+    meshes = {'nvg_envgb_psq42_mount_LOD0': tuple(x[~screw_m] for x in m1),
+              'envgb_height_screw': tuple(x[screw_m] for x in m1),
+              'envgb_carriage': dev_parts(['Mount_02']), 'envgb_arm': dev_parts(['Mount_03']),
+              'envgb_bracket': dev_parts(['Mount_04']), 'envgb_slide': dev_parts(['Mount_05'])}
+    nodes = []
+    for name, par in parent.items():
+        R, t = W[name]
+        if par is None: lr, lt = R, t
+        else:
+            PR, Pt = W[par]; lr = PR.T @ R; lt = PR.T @ (t - Pt)
+        node = {'name': name, 'parent': par or '', 'pos': lt.tolist(), 'rot': mat2quat(lr).tolist(), 'mesh': ''}
+        if name in meshes:
+            p, n, u = meshes[name]
+            write_mesh(out / f'{name}.bin', (p - t) @ R, n @ R, u); node['mesh'] = name
+        nodes.append(node)
+    # The device node's own mesh stays in its own (unchanged) frame.
+    write_mesh(out / 'nvg_envgb_psq42_LOD0.bin', *load(parts, colour, BODY))
+    nodes[-1]['mesh'] = 'nvg_envgb_psq42_LOD0'
+    assert np.allclose(W['nvg_envgb_psq42_LOD0'][0], Rdev)
+    # Flip: CurveRotator turns "axis" in the carriage's frame (the root's orientation) between these.
+    q_on = mat2quat(Rdev)
+    dq = qmul(GP_OFF, (-GP_ON[0], -GP_ON[1], -GP_ON[2], GP_ON[3]))
+    sgn = np.sign((2 * np.arctan2(dq[0], dq[3]) + np.pi) % (2 * np.pi) - np.pi)
+    q_off = np.array(qmul(qx(sgn * np.radians(FLIP_DEG)), q_on))
+    joints = {'height': {'node': 'envgb_height_screw / envgb_carriage', 'axisInMount': up.tolist(),
+                         'screwPivotInMount': rod.mean(0).tolist(), 'screwAxisLocal': 'Y'},
+              'flip': {'node': 'axis', 'pivotInCarriage': [0, 0, 0], 'axisLocal': 'X', 'degrees': FLIP_DEG},
+              'tilt': {'node': 'envgb_tilt', 'axisLocal': 'X'},
+              'slide': {'node': 'envgb_slide', 'axisLocal': 'Z (away from the face)'}}
+    return nodes, q_on, q_off, joints, Rs, ts
+
+
 def main(parts, tex):
     shared = tuple(channel(tex / f'AN-PSQ-42_{k}.png') for k in ('ao', 'roughness', 'metalness'))
     for colour in COLOURS:
         out = UNITY / colour.lower(); out.mkdir(parents=True, exist_ok=True)
-        Rs, ts, a = seat_for(parts, colour)
-        dev = write_mesh(out / 'device.bin', *load(parts, colour, DEVICE))
+        for old in ('device.bin', 'mount.bin'): (out / old).unlink(missing_ok=True)
+        nodes, q_on, q_off, joints, Rs, ts = rig(parts, colour, out)
         glass = write_mesh(out / 'glass.bin', *load(parts, colour, GLASS))
-        write_mesh(out / 'mount.bin', *load(parts, colour, MOUNT, root_frame=True, seat=(Rs, ts)))
-        # Thermal window: centre of its disc; the device looks along -Y.
-        w = load(parts, colour, [THERMAL_WINDOW])[0]
-        allp = np.vstack([dev, glass])
-        # The hinge: the knuckle where Mount_02 turns on the shroud plate (its bounding-box centre), deployed and
-        # seated, in the root frame. The axis sits there with the seated deployed rotation; the device node is
-        # offset inside it so that, deployed, every point lands where the seated assembly puts it.
-        Ron = qmat(AXIS_ROT)
-        knuckle_lod = load(parts, colour, ['Mount_02'])[0]
-        knuckle_lod = (knuckle_lod.min(0) + knuckle_lod.max(0)) / 2
-        def seated(p): return Rs @ (AXIS_POS + Ron @ p) + ts
-        pivot = seated(knuckle_lod)
-        q_on = qmul(qx(a), GP_ON); q_off = qmul(qx(a), GP_OFF)
-        Q = qmat(q_on)
-        node = Q.T @ (seated(np.zeros(3)) - pivot)
-        info = {'colour': colour.lower(),
-                'thermalLens': ((w.min(0) + w.max(0)) / 2).tolist(),
-                'boundsMin': allp.min(0).tolist(), 'boundsMax': allp.max(0).tolist(),
-                'axisPos': pivot.tolist(), 'onRotation': list(q_on), 'offRotation': list(q_off),
-                'devicePos': node.tolist()}
-        assert np.allclose(pivot + Q @ (node + knuckle_lod), seated(knuckle_lod), atol=1e-6)
-        print(colour, 'hinge at', pivot.round(4), 'device node offset', node.round(4))
+        w = load(parts, colour, [THERMAL_WINDOW])[0]  # thermal window: centre of its disc; the device looks along -Y
+        info = {'colour': colour.lower(), 'thermalLens': ((w.min(0) + w.max(0)) / 2).tolist(),
+                'onRotation': list(map(float, q_on)), 'offRotation': list(map(float, q_off)), 'nodes': nodes}
         (out / 'info.json').write_text(json.dumps(info, indent=1))
+        if colour == COLOURS[0]: (ITEM / 'joints.json').write_text(json.dumps({'nodes': nodes, 'joints': joints}, indent=1))
         print(colour, 'thermal lens at', np.round(info['thermalLens'], 4))
         textures(tex, colour, out, shared)
 

@@ -1,0 +1,182 @@
+{
+ "nodes": [
+  {
+   "name": "nvg_envgb_psq42_mount_LOD0",
+   "parent": "",
+   "pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rot": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "mesh": "nvg_envgb_psq42_mount_LOD0"
+  },
+  {
+   "name": "envgb_height_screw",
+   "parent": "nvg_envgb_psq42_mount_LOD0",
+   "pos": [
+    -0.00017633161592007672,
+    -0.0008077788326810884,
+    0.01202078361861282
+   ],
+   "rot": [
+    0.0013255302727824129,
+    -1.8579453542329409e-06,
+    0.0014016681430389201,
+    0.999998139144499
+   ],
+   "mesh": "envgb_height_screw"
+  },
+  {
+   "name": "envgb_carriage",
+   "parent": "nvg_envgb_psq42_mount_LOD0",
+   "pos": [
+    -0.0002,
+    0.0075,
+    0.0325
+   ],
+   "rot": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "mesh": "envgb_carriage"
+  },
+  {
+   "name": "axis",
+   "parent": "envgb_carriage",
+   "pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rot": [
+    -0.5397761877722255,
+    5.268356063861754e-09,
+    0.0,
+    0.8418085691617087
+   ],
+   "mesh": ""
+  },
+  {
+   "name": "envgb_arm",
+   "parent": "axis",
+   "pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rot": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "mesh": "envgb_arm"
+  },
+  {
+   "name": "envgb_tilt",
+   "parent": "envgb_arm",
+   "pos": [
+    0.0,
+    -0.036336952447926556,
+    -0.0012513476116874228
+   ],
+   "rot": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "mesh": ""
+  },
+  {
+   "name": "envgb_bracket",
+   "parent": "envgb_tilt",
+   "pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rot": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "mesh": "envgb_bracket"
+  },
+  {
+   "name": "envgb_slide",
+   "parent": "envgb_bracket",
+   "pos": [
+    -0.003964893187210577,
+    -0.013140767644254063,
+    -0.013909545478719944
+   ],
+   "rot": [
+    0.746610861466165,
+    0.0,
+    0.0,
+    0.6652610176019267
+   ],
+   "mesh": "envgb_slide"
+  },
+  {
+   "name": "nvg_envgb_psq42_LOD0",
+   "parent": "envgb_slide",
+   "pos": [
+    0.0016779750585556035,
+    -0.002868857982285103,
+    -0.04437408286661317
+   ],
+   "rot": [
+    -0.746610861466165,
+    0.0,
+    7.450580596923828e-09,
+    0.6652610176019268
+   ],
+   "mesh": "nvg_envgb_psq42_LOD0"
+  }
+ ],
+ "joints": {
+  "height": {
+   "node": "envgb_height_screw / envgb_carriage",
+   "axisInMount": [
+    0.00029545253081271543,
+    0.9981849724754858,
+    0.06022186838613116
+   ],
+   "screwPivotInMount": [
+    -0.00017633161592007672,
+    -0.0008077788326810884,
+    0.01202078361861282
+   ],
+   "screwAxisLocal": "Y"
+  },
+  "flip": {
+   "node": "axis",
+   "pivotInCarriage": [
+    0,
+    0,
+    0
+   ],
+   "axisLocal": "X",
+   "degrees": 125.0
+  },
+  "tilt": {
+   "node": "envgb_tilt",
+   "axisLocal": "X"
+  },
+  "slide": {
+   "node": "envgb_slide",
+   "axisLocal": "Z (away from the face)"
+  }
+ }
+}

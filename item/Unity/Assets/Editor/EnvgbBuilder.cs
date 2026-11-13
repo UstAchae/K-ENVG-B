@@ -14,7 +14,8 @@ public static class EnvgbBuilder {
  const string Src="Assets/Source",Gen="Assets/Generated";
  static readonly string Out=Path.GetFullPath(Path.Combine(Application.dataPath,"../../built"));
  public const string DeviceNode="nvg_envgb_psq42_LOD0",ThermalLens="envgb_thermal_lens";
- [Serializable] public class Info {public string colour;public float[] thermalLens,boundsMin,boundsMax,axisPos,onRotation,offRotation,devicePos;}
+ [Serializable] public class Node {public string name,parent,mesh;public float[] pos,rot;}
+ [Serializable] public class Info {public string colour;public float[] thermalLens,onRotation,offRotation;public Node[] nodes;}
 
  const float RotationSpeed=0.75187969f;
  static AnimationCurve Curve(){
@@ -68,9 +69,7 @@ public static class EnvgbBuilder {
   string src=Src+"/"+colour,gen=Gen+"/"+colour;Directory.CreateDirectory(gen);AssetDatabase.Refresh();
   var info=JsonUtility.FromJson<Info>(File.ReadAllText(src+"/info.json"));
   string name="nvg_envgb_psq42_"+colour;
-  var device=ReadMesh(src+"/device.bin",DeviceNode,gen);
   var glassMesh=ReadMesh(src+"/glass.bin","nvg_envgb_psq42_glass_LOD0",gen);
-  var mountMesh=ReadMesh(src+"/mount.bin","nvg_envgb_psq42_mount_LOD0",gen);
 
   // Material names carry the role for finalize.py: _body (textured p0) and _glass.
   var body=new Material(stub){name=name+"_body"};
@@ -80,46 +79,49 @@ public static class EnvgbBuilder {
   AssetDatabase.CreateAsset(body,gen+"/mat_body.asset");
   var glass=new Material(stub){name=name+"_glass"};AssetDatabase.CreateAsset(glass,gen+"/mat_glass.asset");
 
+  // The jointed mount from prepare.py (rig): each node at its rest pose in its parent, with its own mesh. The
+  // shroud plate stays on the root; height screw and carriage on it; the flip hinge "axis" (CurveRotator) on the
+  // carriage; arm, tilt pin, bracket, slide; the device node nvg_envgb_psq42_LOD0 last.
   var root=new GameObject(name);
-  var axis=new GameObject("axis");axis.transform.SetParent(root.transform,false);
-  // Hinge and flip from prepare.py: the ENVG-B seated on the shroud, turning at its own mount's knuckle by the
-  // GPNVG-18's flip.
+  var made=new System.Collections.Generic.Dictionary<string,Transform>();
+  var renderers=new System.Collections.Generic.List<Renderer>();
+  foreach(var n in info.nodes){
+   var go=new GameObject(n.name);go.transform.SetParent(n.parent==""?root.transform:made[n.parent],false);
+   go.transform.localPosition=V(n.pos);go.transform.localRotation=Q(n.rot);made[n.name]=go.transform;
+   if(n.mesh!=""){
+    var mesh=ReadMesh(src+"/"+n.mesh+".bin",n.mesh,gen);
+    go.AddComponent<MeshFilter>().sharedMesh=mesh;
+    var r=go.AddComponent<MeshRenderer>();r.sharedMaterial=body;r.shadowCastingMode=ShadowCastingMode.On;r.receiveShadows=true;renderers.Add(r);
+    var box=go.AddComponent<BoxCollider>();box.center=mesh.bounds.center;box.size=mesh.bounds.size;box.enabled=false;  // disabled like native items
+   }
+  }
+  var lod=made[DeviceNode];var axis=made["axis"];
   var on=Q(info.onRotation);var off=Q(info.offRotation);
-  axis.transform.localPosition=V(info.axisPos);axis.transform.localRotation=on;
+  if(Quaternion.Angle(axis.localRotation,on)>0.01f)throw new Exception("axis rest rotation is not OnRotation");
 
-  var lod=new GameObject(DeviceNode);lod.transform.SetParent(axis.transform,false);lod.transform.localPosition=V(info.devicePos);
-  lod.AddComponent<MeshFilter>().sharedMesh=device;
-  var devR=lod.AddComponent<MeshRenderer>();devR.sharedMaterial=body;devR.shadowCastingMode=ShadowCastingMode.On;devR.receiveShadows=true;
-  var box=lod.AddComponent<BoxCollider>();box.center=device.bounds.center;box.size=device.bounds.size;box.enabled=false;  // disabled like native items
-
-  var gl=new GameObject("nvg_envgb_psq42_glass_LOD0");gl.transform.SetParent(lod.transform,false);
+  var gl=new GameObject("nvg_envgb_psq42_glass_LOD0");gl.transform.SetParent(lod,false);
   gl.AddComponent<MeshFilter>().sharedMesh=glassMesh;
-  var glR=gl.AddComponent<MeshRenderer>();glR.sharedMaterial=glass;glR.shadowCastingMode=ShadowCastingMode.Off;glR.receiveShadows=true;
+  var glR=gl.AddComponent<MeshRenderer>();glR.sharedMaterial=glass;glR.shadowCastingMode=ShadowCastingMode.Off;glR.receiveShadows=true;renderers.Add(glR);
 
   // Thermal objective: centre of its window, +Z out of the front (the device looks along -Y), +Y toward the mount.
-  var lens=new GameObject(ThermalLens);lens.transform.SetParent(lod.transform,false);
+  var lens=new GameObject(ThermalLens);lens.transform.SetParent(lod,false);
   lens.transform.localPosition=new Vector3(info.thermalLens[0],info.thermalLens[1],info.thermalLens[2]);
   lens.transform.localRotation=Quaternion.LookRotation(Vector3.down,Vector3.forward);
 
   // Face light, as the GPNVG-18's "Point light" (off; the game switches it).
-  var lightGo=new GameObject("Point light");lightGo.transform.SetParent(lod.transform,false);
+  var lightGo=new GameObject("Point light");lightGo.transform.SetParent(lod,false);
   lightGo.transform.localPosition=new Vector3(0.0004f,0.0516f,-0.075f);lightGo.transform.localRotation=new Quaternion(0.479f,0,0,0.878f);
   var light=lightGo.AddComponent<Light>();light.type=LightType.Point;light.color=new Color(0.28275859f,1f,0f);light.intensity=3.14f;light.range=0.05f;light.enabled=false;
 
-  var mount=new GameObject("nvg_envgb_psq42_mount_LOD0");mount.transform.SetParent(root.transform,false);
-  mount.AddComponent<MeshFilter>().sharedMesh=mountMesh;
-  var mR=mount.AddComponent<MeshRenderer>();mR.sharedMaterial=body;mR.shadowCastingMode=ShadowCastingMode.On;mR.receiveShadows=true;
-  var mbox=mount.AddComponent<BoxCollider>();mbox.center=mountMesh.bounds.center;mbox.size=mountMesh.bounds.size;mbox.enabled=false;
-
-  var renderers=new Renderer[]{devR,glR,mR};
-  var lodGroup=root.AddComponent<LODGroup>();lodGroup.SetLODs(new[]{new LOD(0.02f,renderers)});lodGroup.size=0.5f;
-  var dress=root.AddComponent<Dress>();dress.DecalTextureType=1;dress.Renderers=renderers;
+  var all=renderers.ToArray();
+  var lodGroup=root.AddComponent<LODGroup>();lodGroup.SetLODs(new[]{new LOD(0.02f,all)});lodGroup.size=0.5f;
+  var dress=root.AddComponent<Dress>();dress.DecalTextureType=1;dress.Renderers=all;
   root.AddComponent<NightVisionDevice>().Set(light);
-  var rot=root.AddComponent<CurveRotator>();rot.RotatedTransform=axis.transform;rot.RotationSpeed=RotationSpeed;rot.OffRotation=off;rot.OnRotation=on;rot.AnimationCurve=Curve();
+  var rot=root.AddComponent<CurveRotator>();rot.RotatedTransform=axis;rot.RotationSpeed=RotationSpeed;rot.OffRotation=off;rot.OnRotation=on;rot.AnimationCurve=Curve();
   root.AddComponent<NightVisionMount>().Set(rot);
+  var b=all[0].bounds;foreach(var r in all)b.Encapsulate(r.bounds);
 
   // Preview: the GPNVG-18's view angles, centred on this device's bounds in the root frame.
-  var b=new Bounds(mR.bounds.center,mR.bounds.size);b.Encapsulate(devR.bounds);
   var pivot=root.AddComponent<PreviewPivot>();
   pivot.pivotPosition=b.center;pivot.pivotRotation=new Quaternion(0.0074694254f,0.98476535f,0.04375f,-0.16812912f);pivot.scale=Vector3.one;
   pivot.Icon=new PreviewPivot.IconSettings{rotation=new Quaternion(-0.049385615f,-0.94817758f,-0.25407037f,0.1843058f),boundsScale=1.8080130f,perspective=15,orthographicSize=10};
