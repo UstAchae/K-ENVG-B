@@ -51,12 +51,13 @@ GP_OFF = (0.98575121, -3.6230801e-08, -4.6429719e-08, 0.16821051)
 PLATE_Y = -0.003
 SEAT_GAP = 0.0005
 # Joints of the mount, for K-3PS-C's adjustments (its NightVisionMount): measured on the seated, deployed model in
-# the root frame. The flip hinge is the barrel between Mount_02 and Mount_03 (circle fit of Mount_03's eye, 0.14 mm
-# rms), the tilt pin the boss between Mount_03 and Mount_04 (fits of both, 0.5 mm rms), both along X. Mount_05 slides
-# in Mount_04's rail, which runs 6.6 deg off the optical axis.
-HINGE = np.array([-0.0002, 0.0075, 0.0325])
-TILT_PIN = np.array([-0.0002, -0.0088, 0.0650])
-RAIL = np.array([0.0, -0.519, 0.855])  # +Z of the slide node: along the rail, away from the face
+# the root frame, kept here in the device node's frame so they move with the seat. The flip hinge is the barrel
+# between Mount_02 and Mount_03 (circle fit of Mount_03's eye, 0.14 mm rms), the tilt pin the boss between Mount_03
+# and Mount_04 (fits of both, 0.5 mm rms), both along X. Mount_05 slides in Mount_04's rail, which runs 6.6 deg off
+# the optical axis.
+HINGE_DEV = np.array([0.00229, 0.00507, 0.01291])
+TILT_PIN_DEV = np.array([0.00229, -0.03127, 0.01166])
+RAIL_DEV = np.array([0.0, -0.9934, -0.1149])  # +Z of the slide node: along the rail, away from the face
 # Flip-up: the GPNVG-18's 142 deg about its own hinge laid the device onto the helmet top ("too far"); about the
 # ENVG-B's hinge 125 deg leaves it just above the helmet's front edge (about 6 mm clear on the FLUX).
 FLIP_DEG = 125.0
@@ -224,6 +225,7 @@ def rig(parts, colour, out):
     Ron = qmat(AXIS_ROT)
     Rdev = Rs @ Ron                                   # the device (and the deployed arm) in the root frame
     def seated(p): return (p @ Ron.T + AXIS_POS) @ Rs.T + ts   # device-frame points -> root frame
+    HINGE, TILT_PIN, RAIL = seated(HINGE_DEV), seated(TILT_PIN_DEV), Rdev @ RAIL_DEV
     # Mount_01's islands: the plate, rail and stop stay; rod and knobs turn with the height screw.
     m1 = load(parts, colour, MOUNT, root_frame=True, seat=(Rs, ts))
     lab = islands(m1[0]); tri_lab = np.repeat(lab, 3)
