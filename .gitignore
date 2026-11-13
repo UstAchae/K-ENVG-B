@@ -1,0 +1,26 @@
+﻿# Purchased model sources: never commit (Royalty Free licence, no redistribution of the source model)
+*.zip
+*.rar
+*.fbx
+*.glb
+*.obj
+*.blend
+*.blend1
+*.max
+*.dae
+*.usdc
+*.abc
+*.tbscene
+item/src/
+item/textures/
+# Unity
+item/Unity/Library/
+item/Unity/Temp/
+item/Unity/Logs/
+item/Unity/obj/
+item/Unity/UserSettings/
+# Build output
+**/bin/
+**/obj/
+*.log
+dump/
