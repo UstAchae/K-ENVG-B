@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.52.2";
+    public const string Version = "0.53.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -217,6 +217,32 @@ internal static class EnvgFusion
     private static bool _loggedMain;
     private static readonly int JitterId = Shader.PropertyToID("_EnvgJitter");
     private static readonly int FootprintId = Shader.PropertyToID("_EnvgFootprint");
+    private static readonly int CropId = Shader.PropertyToID("_EnvgCrop"), CropPrevId = Shader.PropertyToID("_EnvgCropPrev");
+
+    // The part of the screen the thermal picture is worked out for. Over the screen, all of it. In K-3PS-C's
+    // eyepieces only the thermal rectangle is ever shown, so only it (and a margin for the blurs and the lens's
+    // parallax): its size fixed by the eyepiece's field, its corner on the sensor's pixel grid, so the history stays
+    // put. (xy corner, zw size, screen uv)
+    private static Vector4 _crop = new Vector4(0f, 0f, 1f, 1f), _cropPrev = new Vector4(0f, 0f, 1f, 1f);
+    private static Vector4 _lastField;
+    private static int _lastFieldFrame = -100;
+    private static bool _loggedCrop;
+    private const float CropMargin = 0.04f;   // uv of the screen's height, each side
+
+    private static Vector4 CropFor(int fullWidth, int fullHeight)
+    {
+        if (!EyepieceLink.ClaimedRecently || Time.frameCount - _lastFieldFrame > 2 || _lastField.z <= 0f)
+            return new Vector4(0f, 0f, 1f, 1f);
+        Vector4 f = _lastField;
+        float aspect = Mathf.Max(f.w, 1e-3f), share = EnvgFusionPlugin.ThermalField?.Value ?? 1f;
+        if (share <= 0f)
+            return new Vector4(0f, 0f, 1f, 1f);
+        float halfH = 0.52f * f.z * share + CropMargin, halfW = (0.68f * f.z * share + CropMargin) / aspect;
+        int w = Mathf.Min(fullWidth, Mathf.CeilToInt(2f * halfW * fullWidth)), h = Mathf.Min(fullHeight, Mathf.CeilToInt(2f * halfH * fullHeight));
+        int x = Mathf.Clamp(Mathf.RoundToInt((f.x - halfW) * fullWidth), 0, fullWidth - w);
+        int y = Mathf.Clamp(Mathf.RoundToInt((f.y - halfH) * fullHeight), 0, fullHeight - h);
+        return new Vector4((float)x / fullWidth, (float)y / fullHeight, (float)w / fullWidth, (float)h / fullHeight);
+    }
     private static readonly int LitSoftId = Shader.PropertyToID("_EnvgLitSoft");
     private static readonly int MotionId = Shader.PropertyToID("_EnvgMotion");
     private static readonly int EdgeHistoryId = Shader.PropertyToID("_EnvgEdgeHistory");
@@ -801,6 +827,8 @@ internal static class EnvgFusion
         // the thermal rectangle around the tubes' axis, as the real device shows it: 0.68 of the tube's circle wide and
         // 0.52 of it high (measured on the maker's picture through the eyepiece), times the set share
         Vector4 at = EyepieceLink.FieldInMainUv;
+        _lastField = at;
+        _lastFieldFrame = Time.frameCount;
         float radius = Mathf.Max(at.z, 1e-3f), aspect = Mathf.Max(at.w, 1e-3f);
         float share = EnvgFusionPlugin.ThermalField?.Value ?? 1f;
         Material.SetVector(FieldId, new Vector4(0.68f * radius * share / aspect, 0.52f * radius * share, 4f / Mathf.Max(dest.height, 1), share > 0f ? 1f : 0f));
@@ -813,7 +841,7 @@ internal static class EnvgFusion
         int pass = show == EnvgFusionPlugin.ShowThermal ? 15 : show == EnvgFusionPlugin.ShowGeometry ? 17 : show == EnvgFusionPlugin.ShowNormals ? 4
             : show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
         Material.SetVector(FusionId, new Vector4(show == EnvgFusionPlugin.ShowBlackHot ? -1f : 1f, 0.85f, 0f, 0f));
-        Material.SetVector(ScreenTexelId, new Vector4(1f / Mathf.Max(dest.width, 1), 1f / Mathf.Max(dest.height, 1), EnvgFusionPlugin.LineWidth?.Value ?? 1.5f, 0f));
+        Material.SetVector(ScreenTexelId, new Vector4(1f / Mathf.Max(dest.width, 1) / _crop.z, 1f / Mathf.Max(dest.height, 1) / _crop.w, EnvgFusionPlugin.LineWidth?.Value ?? 1.5f, 0f));
         _fuseDraw ??= new CommandBuffer { name = "Justachae ENVG into the eyepieces" };
         _fuseDraw.Clear();
         _fuseDraw.Blit(i2, dest);
@@ -1043,7 +1071,7 @@ internal static class EnvgFusion
             return;
         }
         _grassMaskCb.SetGlobalVector(JitterId, new Vector4(jitter.x, jitter.y, 0f, 0f));
-        _grassMaskCb.SetGlobalVector(FootprintId, new Vector4(1f / GrassMask.width, 1f / GrassMask.height, 0f, 0f));
+        _grassMaskCb.SetGlobalVector(FootprintId, new Vector4(_crop.z / GrassMask.width, _crop.w / GrassMask.height, 0f, 0f));
         _grassMaskCb.Blit(GrassScreenId, GrassMask, Material, 32);
         _grassMaskCb.ReleaseTemporaryRT(GrassScreenId);
     }
@@ -1305,8 +1333,20 @@ internal static class EnvgFusion
             Oversample = Mathf.Clamp(EnvgFusionPlugin.RenderScale?.Value ?? 1, 1, 2);
         }
         _sensorWidth = Mathf.Max(_sensorWidth, wanted);
-        int width = _sensorWidth;
-        int height = Mathf.Max(16, Mathf.RoundToInt(width * (float)main.pixelHeight / Mathf.Max(main.pixelWidth, 1)));
+        int fullWidth = _sensorWidth;
+        int fullHeight = Mathf.Max(16, Mathf.RoundToInt(fullWidth * (float)main.pixelHeight / Mathf.Max(main.pixelWidth, 1)));
+        _cropPrev = _crop;
+        _crop = CropFor(fullWidth, fullHeight);
+        Shader.SetGlobalVector(CropId, _crop);
+        Shader.SetGlobalVector(CropPrevId, _cropPrev);
+        int width = Mathf.Max(16, Mathf.RoundToInt(_crop.z * fullWidth));
+        int height = Mathf.Max(16, Mathf.RoundToInt(_crop.w * fullHeight));
+        if (!_loggedCrop && _crop.z < 1f)
+        {
+            _loggedCrop = true;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG: in the eyepieces the thermal picture is worked out for its rectangle only: " + width + "x" + height
+                + " of the sensor's " + fullWidth + "x" + fullHeight + " (crop " + _crop.x.ToString("F3") + "," + _crop.y.ToString("F3") + " size " + _crop.z.ToString("F3") + "x" + _crop.w.ToString("F3") + ")");
+        }
         int fineWidth = width * Oversample, fineHeight = height * Oversample;
         RenderTexture picture = Ensure(ref Picture, fineWidth, fineHeight, 0, RenderTextureFormat.ARGBHalf, "Justachae ENVG thermal");
         RenderTexture normals = Ensure(ref Normals, fineWidth, fineHeight, 0, RenderTextureFormat.ARGB32, "Justachae ENVG normals");
@@ -1458,7 +1498,7 @@ internal static class EnvgFusion
         }
         _mainCopy.Clear();
         _mainCopy.SetGlobalVector(JitterId, new Vector4(jitter.x, jitter.y, 0f, 0f));
-        _mainCopy.SetGlobalVector(FootprintId, new Vector4(1f / normals.width, 1f / normals.height, 0f, 0f));
+        _mainCopy.SetGlobalVector(FootprintId, new Vector4(_crop.z / normals.width, _crop.w / normals.height, 0f, 0f));
         _mainCopy.Blit(BuiltinRenderTextureType.CameraTarget, picture, Material, 25);
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer2, normals, Material, 25);
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer0, albedo, Material, 25);

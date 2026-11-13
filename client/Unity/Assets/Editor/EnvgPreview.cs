@@ -33,6 +33,19 @@ public static class EnvgPreview
         var m = new Material(shader);
 
         int width = (int)frame["width"], height = (int)frame["height"], over = (int)frame["oversample"];
+        // -envgCrop x,y,w,h (screen uv): the chain worked out for that part of the screen only, as in the eyepieces
+        Vector4 crop = new Vector4(0f, 0f, 1f, 1f);
+        string? cropArg = Arg(args, "-envgCrop");
+        if (cropArg != null)
+        {
+            string[] c = cropArg.Split(',');
+            crop = new Vector4(float.Parse(c[0], CultureInfo.InvariantCulture), float.Parse(c[1], CultureInfo.InvariantCulture), float.Parse(c[2], CultureInfo.InvariantCulture), float.Parse(c[3], CultureInfo.InvariantCulture));
+            width = Mathf.RoundToInt(width * crop.z);
+            height = Mathf.RoundToInt(height * crop.w);
+        }
+        Shader.SetGlobalVector("_EnvgCrop", cropArg != null ? crop : Vector4.zero);
+        Shader.SetGlobalVector("_EnvgCropPrev", cropArg != null ? crop : Vector4.zero);
+        _crop = crop;
         int fw = width * over, fh = height * over;
         var t = new EnvgChainInput
         {
@@ -123,7 +136,7 @@ public static class EnvgPreview
         float lens = (frame.TryGetValue("lensOffset", out float lo) ? lo : 0f) * 0.01f;
         m.SetVector("_EnvgParallax", new Vector4(lens, 0.5f / Mathf.Max(t.Tan.y, 1e-4f), 0f, 0f));
         Mesh quad = FullScreenQuad();
-        m.SetVector("_EnvgScreenTexel", new Vector4(1f / screen.width, 1f / screen.height, frame.TryGetValue("lineWidth", out float lw) ? lw : 1.5f, 0f));
+        m.SetVector("_EnvgScreenTexel", new Vector4(1f / screen.width / crop.z, 1f / screen.height / crop.w, frame.TryGetValue("lineWidth", out float lw) ? lw : 1.5f, 0f));
         m.SetTexture("_EnvgScene", screen);
         m.SetVector("_EnvgWashout", new Vector4(frame.TryGetValue("washout", out float wo) ? wo : 1f, 0f, 0f, 0f));
         m.SetTexture("_EnvgHeatView", t.HistoryB);
@@ -230,6 +243,7 @@ public static class EnvgPreview
         return mesh;
     }
 
+    private static Vector4 _crop = new Vector4(0f, 0f, 1f, 1f);
     private static RenderTexture Load(string dir, string name, RenderTextureFormat format)
     {
         string path = Path.Combine(dir, name + ".raw");
@@ -239,6 +253,15 @@ public static class EnvgPreview
         var tex = new Texture2D(w, h, TextureFormat.RGBAFloat, false, true);
         tex.LoadRawTextureData(data);
         tex.Apply();
+        tex.filterMode = FilterMode.Point;
+        if (name != "screen" && _crop.z < 1f)
+        {
+            // the part of the screen the chain is worked out for
+            RenderTexture part = New(Mathf.RoundToInt(w * _crop.z), Mathf.RoundToInt(h * _crop.w), format);
+            Graphics.Blit(tex, part, new Vector2(_crop.z, _crop.w), new Vector2(_crop.x, _crop.y));
+            Object.DestroyImmediate(tex);
+            return part;
+        }
         RenderTexture rt = New(w, h, format);
         Graphics.Blit(tex, rt);
         Object.DestroyImmediate(tex);

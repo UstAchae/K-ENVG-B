@@ -40,6 +40,15 @@ Shader "Justachae/ENVG/Outline"
         return o;
     }
 
+    // The thermal picture may cover only part of the screen (in the eyepieces: the thermal rectangle and a margin):
+    // its textures span the crop, xy its corner and zw its size in screen uv (all 0: the whole screen). Last frame's
+    // crop for following things through time.
+    float4 _EnvgCrop, _EnvgCropPrev;
+    float4 cropOf(float4 c) { return c.z > 0.0 ? c : float4(0, 0, 1, 1); }
+    float2 toScreen(float2 cuv) { float4 c = cropOf(_EnvgCrop); return c.xy + cuv * c.zw; }
+    float2 toChain(float2 suv) { float4 c = cropOf(_EnvgCrop); return (suv - c.xy) / c.zw; }
+    float2 toChainPrev(float2 suv) { float4 c = cropOf(_EnvgCropPrev); return (suv - c.xy) / c.zw; }
+
     float4 fragCopy(v2f i) : SV_Target
     {
         return float4(tex2D(_MainTex, i.uv).rgb, 1);
@@ -177,14 +186,15 @@ Shader "Justachae/ENVG/Outline"
     // what the thermal lens sees there: the scene that far above it.
     float2 thermalUv(float2 uv)
     {
+        // (uv on the screen; the result in the thermal textures' own uv)
         if (_EnvgParallax.x <= 0.0 && _EnvgParallax.z == 0.0)
-            return uv;
+            return toChain(uv);
         // seen from the lens, a thing at distance d sits off by the lens's offset over d against the tube's view
         float2 slope = float2(_EnvgParallax.z * _EnvgParallax.w, _EnvgParallax.x * _EnvgParallax.y);
-        float d = tex2Dlod(_EnvgDepth, float4(uv, 0, 0)).r;
+        float d = tex2Dlod(_EnvgDepth, float4(toChain(uv), 0, 0)).r;
         float2 s = slope / max(d, 0.25);
-        d = tex2Dlod(_EnvgDepth, float4(uv + s, 0, 0)).r;
-        return uv + slope / max(d, 0.25);
+        d = tex2Dlod(_EnvgDepth, float4(toChain(uv + s), 0, 0)).r;
+        return toChain(uv + slope / max(d, 0.25));
     }
 
     // the thermal picture is a rectangle (4:3) within the tubes' round field: outside it, the tubes' picture alone
@@ -537,7 +547,7 @@ Shader "Justachae/ENVG/Outline"
                 [unroll] for (int y = 0; y < 4; y++)
                     [unroll] for (int x = 0; x < 4; x++)
                     {
-                        float v = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, i.uv + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy));
+                        float v = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, toScreen(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy));
                         s[y * 4 + x] = v;
                         sd += v;
                         sx += v * (x - 1.5);
@@ -712,7 +722,8 @@ Shader "Justachae/ENVG/Outline"
                 float3 nf = tex2D(_EnvgGeoFar, i.uv).rgb;
                 float3 n = dot(nf, nf) > 1e-4 ? normalize(nf) : normalize(g2.rgb * 2.0 - 1.0);
                 float d = tex2D(_EnvgDepth, i.uv).r;
-                float3 ray = float3((i.uv.x * 2.0 - 1.0) * _EnvgTan.x, (i.uv.y * 2.0 - 1.0) * _EnvgTan.y, -1.0);
+                float2 su = toScreen(i.uv);
+                float3 ray = float3((su.x * 2.0 - 1.0) * _EnvgTan.x, (su.y * 2.0 - 1.0) * _EnvgTan.y, -1.0);
                 float3 dir = normalize(mul((float3x3)_EnvgCamToWorld, ray));
 
                 float3 albedoRgb = tex2D(_EnvgAlbedo, i.uv).rgb;
@@ -1177,7 +1188,7 @@ Shader "Justachae/ENVG/Outline"
                 float4 sum = 0;
                 [unroll] for (int y = 0; y < 4; y++)
                     [unroll] for (int x = 0; x < 4; x++)
-                        sum += tex2D(_MainTex, i.uv + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy);
+                        sum += tex2D(_MainTex, toScreen(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy);
                 return sum / 16.0;
             }
             ENDCG
@@ -1268,7 +1279,7 @@ Shader "Justachae/ENVG/Outline"
                         hi = max(hi, v);
                     }
                 }
-                float2 previous = i.uv - tex2D(_EnvgMotion, i.uv).xy;
+                float2 previous = toChainPrev(toScreen(i.uv) - tex2D(_EnvgMotion, i.uv).xy);
                 if (_EnvgTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
                     return float4(c, c, c, 1);
                 float h = tex2D(_EnvgEdgeHistory, previous).r;
@@ -1400,7 +1411,7 @@ Shader "Justachae/ENVG/Outline"
                 float c = 0;
                 [unroll] for (int y = 0; y < 4; y++)
                     [unroll] for (int x = 0; x < 4; x++)
-                        c += tex2D(_MainTex, i.uv + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy).r > -50.0 ? 1.0 : 0.0;
+                        c += tex2D(_MainTex, toScreen(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy).r > -50.0 ? 1.0 : 0.0;
                 c /= 16.0;
                 return float4(c, c, c, 1);
             }
