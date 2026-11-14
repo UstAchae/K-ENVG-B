@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.59.0";
+    public const string Version = "0.59.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -178,9 +178,10 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
                 I2Level.Value = Mathf.Clamp(I2Level.Value + gain, 0, I2Steps);
                 GainShownUntil = Time.unscaledTime + 2.5f;
             }
-            // the eyepieces (when they take it) dim both tubes, in every mode
-            EyepieceLink.SetGain(EnvgFusion.I2Gain);
         }
+        // the eyepieces (when they take it) dim both tubes, in every mode, from the saved level on (sent only on a change)
+        if (EnvgFusion.Active)
+            EyepieceLink.SetGain(EnvgFusion.I2Gain);
         EnvgFusion.Update();
     }
 
