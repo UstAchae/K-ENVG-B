@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.64.1";
+    public const string Version = "0.65.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1232,6 +1232,7 @@ internal static class EnvgFusion
         Ensure(ref HeatBase, fineWidth, fineHeight, 0, RenderTextureFormat.ARGBHalf, "Justachae ENVG heat base");
         Ensure(ref GrassMask, fineWidth, fineHeight, 0, RenderTextureFormat.RHalf, "Justachae ENVG grass mask");
         Ensure(ref BodyMask, fineWidth, fineHeight, 0, RenderTextureFormat.RHalf, "Justachae ENVG body heat");
+        Ensure(ref GlassChain, fineWidth, fineHeight, 0, RenderTextureFormat.RHalf, "Justachae ENVG sights' glass, thermal pixels");
         if (EdgeHistA == null || EdgeHistA.width != width * Oversample || EdgeHistA.height != height * Oversample)
             EnvgChain.ResetHistory();
         Ensure(ref EdgeHistA, width * Oversample, height * Oversample, 0, RenderTextureFormat.RHalf, "Justachae ENVG edges, followed A");
@@ -1342,6 +1343,8 @@ internal static class EnvgFusion
     private static RenderTexture? _glassMask;
     private static readonly int GlassMaskId = Shader.PropertyToID("_EnvgGlassMask");
     private static readonly int GlassOnId = Shader.PropertyToID("_EnvgGlassOn");
+    private static readonly int GlassChainId = Shader.PropertyToID("_EnvgGlassChain");
+    private static RenderTexture? GlassChain;
     private const float SightReach = 3f;   // as the game itself: sights farther than this are not looked through
     private static bool _loggedGlass, _loggedNoGlass;
 
@@ -1419,6 +1422,12 @@ internal static class EnvgFusion
             drawn++;
         }
         cb.SetGlobalTexture(GlassMaskId, _glassMask);
+        // and at the thermal picture's own pixels (the frame's sub-pixel offset taken back, as every copy), for the heat
+        if (GlassChain != null)
+        {
+            cb.Blit(_glassMask, GlassChain, Material, 25);
+            cb.SetGlobalTexture(GlassChainId, GlassChain);
+        }
         // read where this frame's sub-pixel offset put the glass (the picture it is laid over is the settled one)
         Shader.SetGlobalVector(GlassOnId, new Vector4(drawn > 0 ? 1f : 0f, jitter.x, jitter.y, 0f));
         if (!_loggedGlass)
@@ -1622,8 +1631,8 @@ internal static class EnvgFusion
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer1, specular, Material, 25);
         _mainCopy.Blit(normals, depth, Material, 12);
         DrawBodies(_mainCopy);
-        _mainCopy.SetGlobalVector(JitterId, Vector4.zero);
         DrawGlass(_mainCopy, main, jitter);
+        _mainCopy.SetGlobalVector(JitterId, Vector4.zero);
 
         if ((main.depthTextureMode & DepthTextureMode.MotionVectors) == 0)
             main.depthTextureMode |= DepthTextureMode.MotionVectors | DepthTextureMode.Depth;

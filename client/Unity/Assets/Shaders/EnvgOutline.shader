@@ -236,6 +236,17 @@ Shader "Justachae/ENVG/Outline"
     // there.
     sampler2D _EnvgGlassMask;
     float4 _EnvgGlassOn;   // x: 1 when the mask was drawn this frame, yz: this frame's sub-pixel offset (uv)
+    // ...and the same glass at the thermal picture's own pixels (averaged like the other copies), for the heat: what
+    // the thermal lens sees in a sight's window is the glass itself, about as warm as the sight around it, so no edge
+    // forms between the frame and its window and no heat of the scene beyond reaches the window's rim
+    sampler2D _EnvgGlassChain;
+    float4 withGlass(float4 c, float air, float2 tuv)
+    {
+        if (_EnvgGlassOn.x < 0.5)
+            return c;
+        float g = saturate(tex2D(_EnvgGlassChain, tuv).r);
+        return lerp(c, float4(air / 100.0, 0, air / 100.0, 1), g);
+    }
     float sightGlass(float2 uv)
     {
         if (_EnvgGlassOn.x < 0.5)
@@ -750,7 +761,7 @@ Shader "Justachae/ENVG/Outline"
                 float sky = air - 25.0;                 // a clear night or day sky in the long-wave band
                 float4 g2 = tex2D(_EnvgNormals, i.uv);
                 if (dot(g2.rgb, g2.rgb) < 1e-4)
-                    return float4(sky / 100.0, sky / 100.0, sky / 100.0, 0);   // no surface (alpha 0): sky, or a crack
+                    return withGlass(float4(sky / 100.0, sky / 100.0, sky / 100.0, 0), air, i.uv);   // no surface (alpha 0): sky, or a crack
                 // the surface's orientation over a couple of pixels (the geometric source blurred), not each texel's
                 // normal map: a texture's bumps don't make its own pattern of heat; the terrain's real slopes do
                 float3 nf = tex2D(_EnvgGeoFar, i.uv).rgb;
@@ -791,7 +802,7 @@ Shader "Justachae/ENVG/Outline"
                     }
                     native = lerp(native, 34.0, hotBody);
                     native = lerp(air, native, exp(-d / max(_EnvgThermo.w, 1.0)));
-                    return float4(native / 100.0, 0, native / 100.0, 1);
+                    return withGlass(float4(native / 100.0, 0, native / 100.0, 1), air, i.uv);
                 }
                 // vegetation: the grass is drawn for this camera in pure green (no red, no blue), which no level surface is
                 float veg = albedoRgb.g > 0.01 ? saturate(1.0 - max(albedoRgb.r, albedoRgb.b) / (0.05 * albedoRgb.g)) : 0.0;
@@ -857,7 +868,7 @@ Shader "Justachae/ENVG/Outline"
 
                 float t = lerp(air, apparent, exp(-d / max(_EnvgThermo.w, 1.0)));
                 t /= 100.0;
-                return float4(t, foliage, t, 1);
+                return withGlass(float4(t, foliage, t, 1), air, i.uv);
             }
             ENDCG
         }
