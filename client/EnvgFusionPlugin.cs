@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.60.0";
+    public const string Version = "0.60.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -727,8 +727,14 @@ internal static class EnvgFusion
         // the tube's picture at the set gain (0: the tubes dark, the thermal picture alone)
         // (handed to the eyepieces for both tubes when they take it; else applied here to the right one)
         EyepieceLink.SetGain(I2Gain);
-        _fuseDraw.SetGlobalVector(I2DimId, new Vector4(EyepieceLink.TakesGain ? 0f : 1f - I2Gain, 0f, 0f, 0f));
-        _fuseDraw.Blit(i2, dest, Material, 37);
+        // (a plain copy whenever nothing is to be dimmed here: the copy through our own pass, with the eyepieces already
+        // dimming, left green fringes along every bright edge of the tube's picture)
+        bool dimHere = !EyepieceLink.TakesGain && I2Gain < 0.999f;
+        _fuseDraw.SetGlobalVector(I2DimId, new Vector4(dimHere ? 1f - I2Gain : 0f, 0f, 0f, 0f));
+        if (dimHere)
+            _fuseDraw.Blit(i2, dest, Material, 37);
+        else
+            _fuseDraw.Blit(i2, dest);
         _fuseDraw.SetRenderTarget(dest);
         _fuseDraw.SetViewport(new Rect(0f, 0f, dest.width, dest.height));
         _fuseDraw.DrawMesh(_fuseQuad, Matrix4x4.identity, Material, 0, pass);
