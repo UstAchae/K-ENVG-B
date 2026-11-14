@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.66.0";
+    public const string Version = "0.67.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -38,7 +38,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
     internal const string ShowOutline = "轮廓", ShowFusion = "白热融合", ShowBlackHot = "黑热融合", ShowI2 = "纯夜视";
     // the device's four modes, in the order the arrow keys step through them
     internal static readonly string[] Modes = { ShowI2, ShowOutline, ShowFusion, ShowBlackHot };
-    internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? NextMode, PreviousMode, GainUp, GainDown;
+    internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? NextMode, PreviousMode, GainUp, GainDown, PodLeft, PodRight;
     internal static ConfigEntry<float>? I2Level;
     private const float GainFullTravel = 2.5f;   // seconds for the gain to go from dark to full with an arrow held
     internal static float GainShownUntil;   // the I2 gain bar shows while it changes and for a moment after
@@ -65,6 +65,10 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("切到下一个模式（纯夜视 → 轮廓 → 白热融合 → 黑热融合）。", null, new ConfigurationManagerAttributes { Order = 8 }));
         PreviousMode = Config.Bind(Section, "上一个模式", new BepInEx.Configuration.KeyboardShortcut(KeyCode.LeftArrow),
             new ConfigDescription("切到上一个模式。", null, new ConfigurationManagerAttributes { Order = 8 }));
+        PodLeft = Config.Bind(Section, "掰起/放下左目镜", new BepInEx.Configuration.KeyboardShortcut(KeyCode.LeftArrow, KeyCode.LeftAlt),
+            new ConfigDescription("左目镜横着掰上去或放回（真机的两个目镜各自可以掰起）。掰起后那一侧的夜视管关闭。", null, new ConfigurationManagerAttributes { Order = 8 }));
+        PodRight = Config.Bind(Section, "掰起/放下右目镜", new BepInEx.Configuration.KeyboardShortcut(KeyCode.RightArrow, KeyCode.LeftAlt),
+            new ConfigDescription("右目镜横着掰上去或放回。右目镜带着热像模块：掰起后热像融合、轮廓和目镜信息都关闭。", null, new ConfigurationManagerAttributes { Order = 8 }));
         GainUp = Config.Bind(Section, "夜视增益 +", new BepInEx.Configuration.KeyboardShortcut(KeyCode.UpArrow),
             new ConfigDescription("调高夜视管增益：点一下微调，按住连续变化（从 0 到满约 2.5 秒）。调节时目镜热像框里靠左边显示黄色的 I2 GAIN 竖条。", null, new ConfigurationManagerAttributes { Order = 8 }));
         GainDown = Config.Bind(Section, "夜视增益 -", new BepInEx.Configuration.KeyboardShortcut(KeyCode.DownArrow),
@@ -165,10 +169,22 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 
     private void Update()
     {
+        // Alt + ← →: the pods (not while a menu, the inventory or the map has the cursor); with Alt held the plain arrows
+        // don't switch the mode
+        bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+        bool worn = EnvgFusion.EnvgbDown || EnvgFusion.WornDevice != null;   // (read first: it notes the worn device this frame)
+        if (worn && EnvgFusion.WornDevice != null && !Cursor.visible)
+        {
+            if (PodLeft != null && PodLeft.Value.IsDown())
+                EnvgPods.Toggle(false);
+            if (PodRight != null && PodRight.Value.IsDown())
+                EnvgPods.Toggle(true);
+        }
+        EnvgPods.Update(EnvgFusion.Wearer, EnvgFusion.WornDevice);
         // ← →: the device's modes (not while a menu, the inventory or the map has the cursor)
         if (EnvgFusion.Active && Show != null && !Cursor.visible)
         {
-            int step = NextMode != null && NextMode.Value.IsDown() ? 1 : PreviousMode != null && PreviousMode.Value.IsDown() ? -1 : 0;
+            int step = alt ? 0 : NextMode != null && NextMode.Value.IsDown() ? 1 : PreviousMode != null && PreviousMode.Value.IsDown() ? -1 : 0;
             if (step != 0)
             {
                 int at = System.Array.IndexOf(Modes, Show.Value);
@@ -482,6 +498,10 @@ internal static class EnvgFusion
     // As the game itself tells whether the goggles are down (its own toggle sound reads the same): the night-vision
     // component in the headwear slot, its togglable on. Read once a frame; the item's template looked up only when the
     // item changes.
+    // the ENVG-B on the local player's head (down or up), and who wears it: for its pods
+    internal static EFT.Player? Wearer;
+    internal static EFT.InventoryLogic.Item? WornDevice;
+
     internal static bool EnvgbDown
     {
         get
@@ -490,6 +510,8 @@ internal static class EnvgFusion
                 return _envgbDown;
             _envgbFrame = Time.frameCount;
             _envgbDown = false;
+            Wearer = null;
+            WornDevice = null;
             try
             {
                 if (!Singleton<EFT.GameWorld>.Instantiated)
@@ -510,6 +532,11 @@ internal static class EnvgFusion
                     }
                 }
                 _envgbDown = _lastIsEnvgb && (nv.Togglable == null || nv.Togglable.On);
+                if (_lastIsEnvgb)
+                {
+                    Wearer = player;
+                    WornDevice = nv.Item;
+                }
             }
             catch (System.Exception)
             {
@@ -621,7 +648,7 @@ internal static class EnvgFusion
                 _tubeFrame = Time.frameCount;
                 MeasureBrightness(_main);
             }
-            if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2)
+            if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || !EnvgPods.RightDown)
                 return;
             Graphics.ExecuteCommandBuffer(_overlayDraw);
             RequestHistogram();
@@ -686,7 +713,8 @@ internal static class EnvgFusion
         if (!Active || _main == null || _overlayDraw == null || Material == null || Edges == null || Picture == null || Ridge == null)
             return false;
         string show = EnvgFusionPlugin.Show?.Value ?? EnvgFusionPlugin.ShowOutline;
-        if (show == EnvgFusionPlugin.ShowI2)
+        // (the right pod swung up: its tube, the thermal module with it, is off)
+        if (show == EnvgFusionPlugin.ShowI2 || !EnvgPods.RightDown)
             return false;
         if (_fusedFrame != Time.frameCount)
         {
@@ -1163,7 +1191,7 @@ internal static class EnvgFusion
             _mainCopy.Clear();
         if (!Active || camera != _main || _main == null || Material == null)
             return;
-        if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2)
+        if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || !EnvgPods.RightDown)
         {
             _mainCopy?.Clear();
             _motionCopy?.Clear();
