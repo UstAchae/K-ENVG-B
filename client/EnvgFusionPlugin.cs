@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.63.1";
+    public const string Version = "0.64.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1279,7 +1279,66 @@ internal static class EnvgFusion
     private static Material? _glassMaterial;
     private static readonly HashSet<CollimatorSight> _sights = new HashSet<CollimatorSight>();
     internal static void SightEnabled(CollimatorSight sight) => _sights.Add(sight);
-    internal static void SightDisabled(CollimatorSight sight) => _sights.Remove(sight);
+    internal static void SightDisabled(CollimatorSight sight)
+    {
+        _sights.Remove(sight);
+        _sightGlass.Remove(sight);
+    }
+
+    // A sight's glass: the see-through parts of its own model (transparent materials: its windows, its lenses; the
+    // housing is opaque). The game's reticle plane is not it: a small quad turned to face the eye wherever it is, which
+    // seen at a slant covers only part of the window. Found once per sight, from the reticle plane up to the sight's own
+    // root (the node under the slot it is fitted in), leaving out anything fitted into slots of its own.
+    private struct GlassPart
+    {
+        public Renderer Renderer;
+        public int Sub;
+    }
+    private static readonly Dictionary<CollimatorSight, GlassPart[]> _sightGlass = new Dictionary<CollimatorSight, GlassPart[]>();
+    private static readonly List<GlassPart> _partsFound = new List<GlassPart>();
+    private static readonly HashSet<string> _loggedSights = new HashSet<string>();
+
+    private static bool IsSlot(Transform t) => t.name.StartsWith("mod_", System.StringComparison.OrdinalIgnoreCase);
+
+    private static GlassPart[] GlassOf(CollimatorSight sight)
+    {
+        if (_sightGlass.TryGetValue(sight, out GlassPart[] known) && System.Array.TrueForAll(known, p => p.Renderer != null))
+            return known;
+        Transform root = sight.transform;
+        for (int k = 0; k < 12 && root.parent != null && !IsSlot(root.parent); k++)
+            root = root.parent;
+        _partsFound.Clear();
+        var names = new System.Text.StringBuilder();
+        foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
+        {
+            if (r == sight.CollimatorMeshRenderer || r is ParticleSystemRenderer || r is LineRenderer || r is TrailRenderer)
+                continue;
+            bool inOtherSlot = false;
+            for (Transform? t = r.transform; t != null && t != root; t = t.parent)
+                if (IsSlot(t))
+                {
+                    inOtherSlot = true;
+                    break;
+                }
+            if (inOtherSlot)
+                continue;
+            Material[] materials = r.sharedMaterials;
+            for (int sub = 0; sub < materials.Length; sub++)
+            {
+                Material m = materials[sub];
+                if (m == null || m.renderQueue <= 2500)
+                    continue;
+                _partsFound.Add(new GlassPart { Renderer = r, Sub = sub });
+                if (names.Length < 400)
+                    names.Append(r.name).Append(" [").Append(m.name).Append(", ").Append(m.shader != null ? m.shader.name : "-").Append("] ");
+            }
+        }
+        GlassPart[] parts = _partsFound.ToArray();
+        _sightGlass[sight] = parts;
+        if (_loggedSights.Add(root.name))
+            EnvgFusionPlugin.Log?.LogInfo("ENVG sights' glass of " + root.name + ": " + (parts.Length > 0 ? parts.Length + " see-through parts: " + names : "none found, its reticle plane stands in for it"));
+        return parts;
+    }
     private static RenderTexture? _glassMask;
     private static readonly int GlassMaskId = Shader.PropertyToID("_EnvgGlassMask");
     private static readonly int GlassOnId = Shader.PropertyToID("_EnvgGlassOn");
@@ -1287,7 +1346,7 @@ internal static class EnvgFusion
     private static bool _loggedGlass, _loggedNoGlass;
 
     // The glass the tubes see through, drawn into a mask at the frame's own size over the frame's depth (after its opaque
-    // scene: whatever stands in front of the glass, the sight's own frame first, is left out). The reticle planes of
+    // scene: whatever stands in front of the glass, the sight's own frame first, is left out). The see-through parts of
     // the red dots and holographic sights near the camera, and the lens of the scope looked through.
     private static void DrawGlass(CommandBuffer cb, Camera main, Vector2 jitter)
     {
@@ -1339,8 +1398,20 @@ internal static class EnvgFusion
             MeshRenderer? r = sight != null ? sight.CollimatorMeshRenderer : null;
             if (r == null || (r.transform.position - eye).sqrMagnitude > SightReach * SightReach)
                 continue;
-            cb.DrawRenderer(r, _glassMaterial, 0, 0);
-            drawn++;
+            GlassPart[] parts = GlassOf(sight!);
+            if (parts.Length == 0)
+            {
+                cb.DrawRenderer(r, _glassMaterial, 0, 0);
+                drawn++;
+                continue;
+            }
+            foreach (GlassPart part in parts)
+            {
+                if (part.Renderer == null || !part.Renderer.gameObject.activeInHierarchy)
+                    continue;
+                cb.DrawRenderer(part.Renderer, _glassMaterial, part.Sub, 0);
+                drawn++;
+            }
         }
         if (lens != null)
         {
