@@ -173,6 +173,7 @@ Shader "Justachae/ENVG/Outline"
     sampler2D _EnvgGlow;      // the line presence blurred a little
     float4 _EnvgDeclutter;    // x: strength, y: the line density above which lines are dimmed
 
+    float4 _EnvgI2Dim;        // x: how far the tubes' gain is turned down (0 full gain, 1 dark)
     sampler2D _EnvgScene;     // the tube's picture the game's SSAA draws, read through the same full-screen mesh (so at i.uv)
     float4 _EnvgWashout;      // x: strength (0 off)
     float4 _EnvgParallax;     // x: the thermal lens above the eye's tube (m), y: uv per unit of vertical slope (1 / (2 tan(half
@@ -236,7 +237,7 @@ Shader "Justachae/ENVG/Outline"
             return 1.0;
         // as bright as the eye sees it (the frame here is still linear: a spot that looks bright is about half in linear)
         // (the SSAA's picture is the final, display-encoded frame: its values are already as bright as they look)
-        float l = saturate(dot(tex2D(_EnvgScene, uv).rgb, float3(0.2126, 0.7152, 0.0722)));
+        float l = saturate(dot(tex2D(_EnvgScene, uv).rgb, float3(0.2126, 0.7152, 0.0722)) * (1.0 - _EnvgI2Dim.x));
         // only where the tube is close to white does the copper sink in (a lit wall, a torch's spot); a pale sky or a
         // lit middle grey still shows the lines
         float keep = 1.0 - smoothstep(0.3, 0.9, l);
@@ -1549,6 +1550,20 @@ Shader "Justachae/ENVG/Outline"
                 float3 coreCol = i.tint.a > 0.5 ? i.tint.rgb * strength : _EnvgHudCore.rgb;
                 float3 glowCol = i.tint.a > 0.5 ? i.tint.rgb * 0.6 * strength : _EnvgHudGlow.rgb;
                 return float4(coreCol * core + glowCol * glow, 1);
+            }
+            ENDCG
+        }
+
+        // 37: the tube's picture at the set gain (the eyepieces' copy of it)
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragI2Gain
+            float4 fragI2Gain(v2f i) : SV_Target
+            {
+                float4 c = tex2D(_MainTex, i.uv);
+                return float4(c.rgb * (1.0 - _EnvgI2Dim.x), c.a);
             }
             ENDCG
         }

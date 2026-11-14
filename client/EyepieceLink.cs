@@ -14,6 +14,17 @@ internal static class EyepieceLink
     private static Func<int>? _claimedFrame;
     private static Func<Vector4>? _field;
     private static Func<float>? _deployed;
+    // optional (not in every v1): the tubes' gain the eyepieces apply to both tubes (1 full, 0 dark)
+    private static FieldInfo? _i2Gain;
+    internal static bool TakesGain => _i2Gain != null;
+    private static float _sentGain = -1f;
+    internal static void SetGain(float gain)
+    {
+        if (_i2Gain == null || Mathf.Approximately(gain, _sentGain))
+            return;
+        _sentGain = gain;
+        try { _i2Gain.SetValue(null, gain); } catch (Exception) { _i2Gain = null; }
+    }
     private static bool _loggedClaim;
 
     internal static void Bind()
@@ -50,7 +61,10 @@ internal static class EyepieceLink
                 return;
             }
             fuse.SetValue(null, new Func<RenderTexture, RenderTexture, bool>(EnvgFusion.FuseInto));
-            EnvgFusionPlugin.Log?.LogInfo("ENVG: K-3PS-C eyepieces found (EyepieceFusion v1), the picture goes into them when they show the device");
+            FieldInfo? gain = type.GetField("I2Gain", BindingFlags.Public | BindingFlags.Static);
+            _i2Gain = gain != null && gain.FieldType == typeof(float) ? gain : null;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG: K-3PS-C eyepieces found (EyepieceFusion v1), the picture goes into them when they show the device"
+                + (_i2Gain != null ? "; they take the tubes' gain for both eyes" : "; the tubes' gain set in the right eye's picture only"));
         }
         catch (Exception e)
         {

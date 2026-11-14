@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.58.0";
+    public const string Version = "0.59.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -38,7 +38,10 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
     internal const string ShowOutline = "轮廓", ShowFusion = "白热融合", ShowBlackHot = "黑热融合", ShowI2 = "纯夜视";
     // the device's four modes, in the order the arrow keys step through them
     internal static readonly string[] Modes = { ShowI2, ShowOutline, ShowFusion, ShowBlackHot };
-    internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? NextMode, PreviousMode;
+    internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? NextMode, PreviousMode, GainUp, GainDown;
+    internal static ConfigEntry<int>? I2Level;
+    internal const int I2Steps = 10;
+    internal static float GainShownUntil;   // the I2 gain bar shows for a moment after a change
 
     private void Awake()
     {
@@ -60,6 +63,12 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("切到下一个模式（纯夜视 → 轮廓 → 白热融合 → 黑热融合）。", null, new ConfigurationManagerAttributes { Order = 8 }));
         PreviousMode = Config.Bind(Section, "上一个模式", new BepInEx.Configuration.KeyboardShortcut(KeyCode.LeftArrow),
             new ConfigDescription("切到上一个模式。", null, new ConfigurationManagerAttributes { Order = 8 }));
+        GainUp = Config.Bind(Section, "夜视增益 +", new BepInEx.Configuration.KeyboardShortcut(KeyCode.UpArrow),
+            new ConfigDescription("调高夜视管增益一档（目镜里左侧弹出黄色的 I2 GAIN 竖条）。", null, new ConfigurationManagerAttributes { Order = 8 }));
+        GainDown = Config.Bind(Section, "夜视增益 -", new BepInEx.Configuration.KeyboardShortcut(KeyCode.DownArrow),
+            new ConfigDescription("调低夜视管增益一档；调到 0 夜视画面全黑，只剩热像（轮廓模式下就只有轮廓）。", null, new ConfigurationManagerAttributes { Order = 8 }));
+        I2Level = Config.Bind(Section, "夜视增益档位", I2Steps,
+            new ConfigDescription("夜视管增益：0 到 10 档（游戏里用 ↑ ↓ 调）。0 是关掉夜视画面，只看热像。", new AcceptableValueRange<int>(0, I2Steps), new ConfigurationManagerAttributes { Order = 8 }));
         Brightness = Config.Bind(Section, "轮廓亮度", 1f,
             new ConfigDescription("轮廓线有多亮。", new AcceptableValueRange<float>(0f, 4f), new ConfigurationManagerAttributes { Order = 8 }));
         Amount = Config.Bind(Section, "轮廓多少", 1f,
@@ -162,6 +171,15 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
                 Show.Value = Modes[at];
                 EnvgFusion.ModeChanged();
             }
+            // ↑ ↓: the tubes' gain, a step at a time
+            int gain = GainUp != null && GainUp.Value.IsDown() ? 1 : GainDown != null && GainDown.Value.IsDown() ? -1 : 0;
+            if (gain != 0 && I2Level != null)
+            {
+                I2Level.Value = Mathf.Clamp(I2Level.Value + gain, 0, I2Steps);
+                GainShownUntil = Time.unscaledTime + 2.5f;
+            }
+            // the eyepieces (when they take it) dim both tubes, in every mode
+            EyepieceLink.SetGain(EnvgFusion.I2Gain);
         }
         EnvgFusion.Update();
     }
@@ -610,6 +628,7 @@ internal static class EnvgFusion
             }
             SetFieldAndParallax(width, height);
             DelayThermal(show);
+            _screenDraw.SetGlobalVector(I2DimId, Vector4.zero);
             _screenDraw.SetRenderTarget(destination);
             _screenDraw.SetViewport(new Rect(0f, 0f, width, height));
             int pass = show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
@@ -617,6 +636,7 @@ internal static class EnvgFusion
             Material.SetVector(ScreenTexelId, new Vector4(1f / Mathf.Max(width, 1), 1f / Mathf.Max(height, 1), EnvgFusionPlugin.LineWidth?.Value ?? 1.5f, 0f));
             _screenDraw.DrawMesh(mesh, Matrix4x4.identity, Material, 0, pass);
             Graphics.ExecuteCommandBuffer(_screenDraw);
+            // (over the screen the white phosphor itself carries the gain: the picture under the lines is already dimmed)
             if (!_loggedOverlay)
             {
                 _loggedOverlay = true;
@@ -689,7 +709,11 @@ internal static class EnvgFusion
         Material.SetVector(ScreenTexelId, new Vector4(1f / Mathf.Max(dest.width, 1) / _crop.z, 1f / Mathf.Max(dest.height, 1) / _crop.w, EnvgFusionPlugin.LineWidth?.Value ?? 1.5f, 0f));
         _fuseDraw ??= new CommandBuffer { name = "Justachae ENVG into the eyepieces" };
         _fuseDraw.Clear();
-        _fuseDraw.Blit(i2, dest);
+        // the tube's picture at the set gain (0: the tubes dark, the thermal picture alone)
+        // (handed to the eyepieces for both tubes when they take it; else applied here to the right one)
+        EyepieceLink.SetGain(I2Gain);
+        _fuseDraw.SetGlobalVector(I2DimId, new Vector4(EyepieceLink.TakesGain ? 0f : 1f - I2Gain, 0f, 0f, 0f));
+        _fuseDraw.Blit(i2, dest, Material, 37);
         _fuseDraw.SetRenderTarget(dest);
         _fuseDraw.SetViewport(new Rect(0f, 0f, dest.width, dest.height));
         _fuseDraw.DrawMesh(_fuseQuad, Matrix4x4.identity, Material, 0, pass);
@@ -706,6 +730,8 @@ internal static class EnvgFusion
         return true;
     }
     private static CommandBuffer? _fuseDraw;
+    private static readonly int I2DimId = Shader.PropertyToID("_EnvgI2Dim");
+    internal static float I2Gain => (EnvgFusionPlugin.I2Level?.Value ?? EnvgFusionPlugin.I2Steps) / (float)EnvgFusionPlugin.I2Steps;
 
     // the device's symbology in the thermal rectangle (where the eyepieces' field puts it), as bright as the picture
     // has faded in
@@ -716,7 +742,8 @@ internal static class EnvgFusion
         float radius = Mathf.Max(at.z, 1e-3f), aspect = Mathf.Max(at.w, 1e-3f);
         var centre = new Vector2(at.x * dest.width, at.y * dest.height);
         var half = new Vector2(0.68f * radius / aspect * dest.width, 0.52f * radius * dest.height);
-        EnvgHud.Draw(cb, Material, _main, dest, centre, half, new Vector2(at.x, at.y), show, settled);
+        EnvgHud.Draw(cb, Material, _main, dest, centre, half, new Vector2(at.x, at.y), show, settled,
+            Time.unscaledTime < EnvgFusionPlugin.GainShownUntil ? EnvgFusionPlugin.I2Level?.Value ?? EnvgFusionPlugin.I2Steps : -1);
     }
 
 
@@ -747,7 +774,7 @@ internal static class EnvgFusion
             return;
         bool abc = _abcBuilt >= 1;   // measured at least once
         _i2Material!.SetTexture(AbcId, AbcB);
-        _i2Material!.SetVector(I2Id, new Vector4(100f * (EnvgFusionPlugin.TubeBrightness?.Value ?? 1f), EnvgFusionPlugin.I2Noise?.Value ?? 1f, 0f, 1.5f));
+        _i2Material!.SetVector(I2Id, new Vector4(100f * (EnvgFusionPlugin.TubeBrightness?.Value ?? 1f) * I2Gain, EnvgFusionPlugin.I2Noise?.Value ?? 1f, 0f, 1.5f));
         _i2Material.SetVector(I2TimeId, new Vector4(Mathf.Floor(Time.time * 30f) % 1024f, abc ? 1f : 0f, 0f, 0f));
         propagator.SetNightVisionMaterial(_i2Material);
         if (!_loggedI2)

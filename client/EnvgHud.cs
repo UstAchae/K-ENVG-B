@@ -24,7 +24,7 @@ internal static class EnvgHud
     private static readonly List<int> _tris = new List<int>(3072);
     private static readonly List<Color32> _tint = new List<Color32>(2048);
     // the symbology's own colour (alpha 0); the battery's cells green, as the device shows its charge
-    private static readonly Color32 Own = new Color32(0, 0, 0, 0), Charge = new Color32(70, 255, 60, 255);
+    private static readonly Color32 Own = new Color32(0, 0, 0, 0), Charge = new Color32(70, 255, 60, 255), GainColour = new Color32(255, 214, 110, 255);
     private static Color32 _paint = Own;
     // an italic face drawn upright: each glyph's top shifted back by its slant
     private static float _unslant;
@@ -128,7 +128,8 @@ internal static class EnvgHud
     // ---- drawing ----
 
     // Adds the symbology to the eyepiece picture: within the thermal rectangle (centre and half sizes in dest pixels).
-    internal static void Draw(CommandBuffer cb, Material m, Camera main, RenderTexture dest, Vector2 centre, Vector2 half, Vector2 axisUv, string mode, float strength)
+    // gainLevel: the I2 gain bar's level (0..10) while it shows, -1 when it doesn't
+    internal static void Draw(CommandBuffer cb, Material m, Camera main, RenderTexture dest, Vector2 centre, Vector2 half, Vector2 axisUv, string mode, float strength, int gainLevel)
     {
         if (!EnsureFont() || _font == null || strength <= 0f)
             return;
@@ -211,6 +212,26 @@ internal static class EnvgHud
         n = 0;
         Put(mode == EnvgFusionPlugin.ShowOutline ? "OUTLINE" : mode == EnvgFusionPlugin.ShowFusion ? "WHITE HOT" : "BLACK HOT", ref n);
         Text(_buf, n, centre.x, bottom, ts, 0.5f);
+
+        // left of the thermal rectangle, for a moment after a change: the tubes' gain, a yellow bar as the device
+        // shows it (an outline filled from the bottom), "I2 GAIN" under it
+        if (gainLevel >= 0)
+        {
+            _paint = GainColour;
+            float gx = centre.x - half.x - 2.2f * ts, gTop = centre.y + 0.55f * half.y, gBottom = centre.y - 0.45f * half.y;
+            float gw = 0.32f * ts, gMid = 0.5f * (gTop + gBottom), gHalf = 0.5f * (gTop - gBottom);
+            Box(gx, gTop, gw, line * 0.5f, 0.3f * ts);
+            Box(gx, gBottom, gw, line * 0.5f, 0.3f * ts);
+            Box(gx - gw, gMid, line * 0.5f, gHalf, 0.3f * ts);
+            Box(gx + gw, gMid, line * 0.5f, gHalf, 0.3f * ts);
+            float inner = gHalf - 2f * line, filled = 2f * inner * gainLevel / 10f;
+            if (filled > 0.5f)
+                Box(gx, gBottom + 2f * line + 0.5f * filled, gw - 2f * line, 0.5f * filled, 0.25f * ts);
+            n = 0;
+            Put("I2 GAIN", ref n);
+            Text(_buf, n, gx, gBottom - 1.2f * ts, 0.7f * ts, 0.5f);
+            _paint = Own;
+        }
 
         // bottom left: the battery (full)
         float bx = left + 1.1f * ts, by = bottom + 0.35f * ts, bw = 1.1f * ts, bh = 0.45f * ts;
