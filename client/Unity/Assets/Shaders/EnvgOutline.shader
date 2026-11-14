@@ -229,6 +229,20 @@ Shader "Justachae/ENVG/Outline"
         return d <= 0.0 ? 1.0 : smoothstep(lensReach, lensReach + 0.03, d);
     }
 
+    // The sights' glass: long-wave infrared does not go through glass, so the thermal lens sees a red dot's or a
+    // holographic sight's window (and a scope's lens) as a blank, while the tubes see through it. The game draws those
+    // windows itself every frame into _ScopeMask (its own thermal and night vision read it): r the scope's lens, b the
+    // collimators' glass within 3 m, g the active reticle (not glass). Screen uv; nothing thermal is shown there.
+    sampler2D _ScopeMask;
+    float4 _EnvgScopeMaskOn;   // x: 1 in the game (the preview has no such texture)
+    float sightGlass(float2 uv)
+    {
+        if (_EnvgScopeMaskOn.x < 0.5)
+            return 0.0;
+        float4 m = tex2D(_ScopeMask, uv);
+        return saturate(max(m.r, m.b));
+    }
+
     // the overlay's light adds to the tube's: where the tube is already near white, the copper hardly changes what the
     // eye sees, and the lines sink into the bright background; on a dark background they stand out in full
     float washout(float2 uv)
@@ -268,7 +282,7 @@ Shader "Justachae/ENVG/Outline"
         if (field <= 0.0)
             return float4(0, 0, 0, 1);
         float2 tuv = thermalUv(i.uv);
-        field *= beyondLens(tuv);
+        field *= beyondLens(tuv) * (1.0 - sightGlass(i.uv));
         if (field <= 0.0)
             return float4(0, 0, 0, 1);
         float core = edgeAt(tuv);
@@ -1040,7 +1054,7 @@ Shader "Justachae/ENVG/Outline"
                 if (field <= 0.0)
                     return float4(0, 0, 0, 0);
                 float2 tuv = thermalUv(i.uv);
-                field *= beyondLens(tuv);
+                field *= beyondLens(tuv) * (1.0 - sightGlass(i.uv));
                 // the picture in two layers, as a thermal core's detail enhancement makes it: the base (the heat averaged
                 // over one surface only, so no halo crosses an edge), equalized over the display; the detail (the heat
                 // less its base: a face, the gear, the bark), added on top

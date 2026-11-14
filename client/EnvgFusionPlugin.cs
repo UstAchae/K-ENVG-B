@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.61.1";
+    public const string Version = "0.62.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -154,6 +154,8 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             Log.LogWarning("Patching the grass draw failed; no grass in the thermal picture: " + e.Message);
         }
         EyecupSlotIcon.Patch(harmony);
+        // the sights' glass from the game's own scope mask (see the shader's sightGlass)
+        Shader.SetGlobalVector("_EnvgScopeMaskOn", new Vector4(1f, 0f, 0f, 0f));
         MethodInfo? nvPreCull = AccessTools.Method(typeof(BSG.CameraEffects.NightVision), "OnPreCull");
         if (nvPreCull != null)
             harmony.Patch(nvPreCull, postfix: new HarmonyMethod(typeof(EnvgFusion), nameof(EnvgFusion.AfterNightVisionPreCull)));
@@ -738,6 +740,7 @@ internal static class EnvgFusion
         _fuseDraw.SetRenderTarget(dest);
         _fuseDraw.SetViewport(new Rect(0f, 0f, dest.width, dest.height));
         _fuseDraw.DrawMesh(_fuseQuad, Matrix4x4.identity, Material, 0, pass);
+        NoteScopeMask();
         Symbology(_fuseDraw, dest, at, show, settled);
         Graphics.ExecuteCommandBuffer(_fuseDraw);
         // the screen's own draw keeps the field at the centre
@@ -751,6 +754,18 @@ internal static class EnvgFusion
         return true;
     }
     private static CommandBuffer? _fuseDraw;
+
+    // once: whether the game's scope mask (the sights' glass) is there to read while the thermal picture is drawn
+    private static bool _loggedScopeMask;
+    private static readonly int ScopeMaskId = Shader.PropertyToID("_ScopeMask");
+    private static void NoteScopeMask()
+    {
+        if (_loggedScopeMask)
+            return;
+        _loggedScopeMask = true;
+        Texture? mask = Shader.GetGlobalTexture(ScopeMaskId);
+        EnvgFusionPlugin.Log?.LogInfo("ENVG sights' glass from the game's scope mask: " + (mask != null ? mask.name + " " + mask.width + "x" + mask.height : "none (no glass left out)"));
+    }
     private static readonly int I2DimId = Shader.PropertyToID("_EnvgI2Dim");
     internal static float I2Gain => EnvgFusionPlugin.GainNow;
 
