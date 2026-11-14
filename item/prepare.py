@@ -25,9 +25,24 @@ ITEM = Path(__file__).resolve().parent
 UNITY = ITEM / 'Unity/Assets/Source'
 COLOURS = ('Black', 'Tan')
 DEVICE = ['Tube_R', 'Tube_L', 'Eyecup_R', 'Eyecup_L', 'Bridge', 'Mount_02', 'Mount_03', 'Mount_04', 'Mount_05']
-BODY = ['Tube_R', 'Tube_L', 'Bridge']  # the device node's own mesh (the mount is jointed, the eyecups are an item)
+BODY = ['Bridge']  # the device node's own mesh (the mount is jointed, the pods turn, the eyecups are an item)
+GLASS = ['Opacity_Top']  # the bridge's window
 EYECUPS = ['Eyecup_R', 'Eyecup_L']  # the removable eyecup pair, its own item; mesh kept in the device frame
-GLASS = ['Opacity_R', 'Opacity_L', 'Opacity_Mid', 'Opacity_Top']
+# The pods. Each hangs by an arm from its own hinge barrel at an end of the bridge, along the device's Y (fore-aft):
+# cylinders fitted to the bridge's barrels and the left arm's eye (r 9 mm; the right arm's eye shares the right
+# barrel's axis, its knuckle seen around it), and flips up and outward about it (user: "两个目镜是可以横着掰上去的").
+# The right pod carries the thermal module (its window Opacity_Mid sits in Tube_R's housing). Pivots are on the
+# axes, at the barrels' middle; nodes envgb_pod_R/L under the device node, identity = deployed. Turned by
+# AngleAxis(POD_DEG * t, down) for the right and (.., up) for the left, both swing outward and up; at POD_DEG they
+# clear the bridge, the mount and the other pod (1.4 mm and more; past ~170 deg they reach the helmet's front).
+# The pivots are the model's own: the FBX hangs Tube_L/Tube_R (with their glass and eyecups) from the Bridge with
+# their origins on these axes (our fits agree to 0.1 mm); it gives no animation or limits. POD_DEG 90 (user: "先定
+# 90°"): the pods stand out level to the sides; at 150 the eyecups reached the helmet's brim.
+PODS = {'envgb_pod_R': {'body': ['Tube_R'], 'glass': ['Opacity_R', 'Opacity_Mid'], 'eyecup': 'Eyecup_R',
+                        'pivot': (0.04526, -0.04644, -0.02494), 'axis': (0, -1, 0)},
+        'envgb_pod_L': {'body': ['Tube_L'], 'glass': ['Opacity_L'], 'eyecup': 'Eyecup_L',
+                        'pivot': (-0.03077, -0.04644, -0.02498), 'axis': (0, 1, 0)}}
+POD_DEG = 90
 MOUNT = ['Mount_01']
 THERMAL_WINDOW = 'Opacity_Mid'
 # Where the eyecup rims go: the GPNVG-18's eyecups, midway between its eyes (x 0), plate top y 0.0505, z -0.0757.
@@ -362,7 +377,11 @@ def rig(parts, colour, out):
                          'screwPivotInMount': rod.mean(0).tolist(), 'screwAxisLocal': 'Y'},
               'flip': {'node': 'axis', 'pivotInCarriage': [0, 0, 0], 'axisLocal': 'X', 'degrees': FLIP_DEG},
               'tilt': {'node': 'envgb_tilt', 'axisLocal': 'X'},
-              'slide': {'node': 'envgb_slide', 'axisLocal': 'Z (away from the face)'}}
+              'slide': {'node': 'envgb_slide', 'axisLocal': 'Z (away from the face)'},
+              'pods': {k: {'node': f'nvg_envgb_psq42_LOD0/{k}', 'eyecupNode': f'envgb_eyecup_LOD0/{k.replace("pod", "eyecup_pod")}',
+                           'pivotInDevice': list(v['pivot']), 'axisLocal': list(v['axis']), 'degrees': POD_DEG,
+                           'rotation': f'Quaternion.AngleAxis({POD_DEG} * t, {"Vector3.down" if v["axis"][1] < 0 else "Vector3.up"})'}
+                       for k, v in PODS.items()}}
     return nodes, q_on, q_off, joints, Rs, ts
 
 
@@ -373,10 +392,19 @@ def main(parts, tex):
         for old in ('device.bin', 'mount.bin'): (out / old).unlink(missing_ok=True)
         nodes, q_on, q_off, joints, Rs, ts = rig(parts, colour, out)
         glass = write_mesh(out / 'glass.bin', *load(parts, colour, GLASS))
-        write_mesh(out / 'eyecup.bin', *load(parts, colour, EYECUPS))
+        (out / 'eyecup.bin').unlink(missing_ok=True)
+        pods = []
+        for k, v in PODS.items():
+            piv = np.array(v['pivot'])
+            def local(names):
+                p, n, u = load(parts, colour, names); return p - piv, n, u
+            write_mesh(out / f'{k}.bin', *local(v['body']))
+            write_mesh(out / f'{k}_glass.bin', *local(v['glass']))
+            write_mesh(out / f'{k.replace("pod", "eyecup_pod")}.bin', *local([v['eyecup']]))
+            pods.append({'name': k, 'pivot': list(v['pivot'])})
         w = load(parts, colour, [THERMAL_WINDOW])[0]  # thermal window: centre of its disc; the device looks along -Y
         info = {'colour': colour.lower(), 'thermalLens': ((w.min(0) + w.max(0)) / 2).tolist(),
-                'onRotation': list(map(float, q_on)), 'offRotation': list(map(float, q_off)), 'nodes': nodes}
+                'onRotation': list(map(float, q_on)), 'offRotation': list(map(float, q_off)), 'nodes': nodes, 'pods': pods}
         (out / 'info.json').write_text(json.dumps(info, indent=1))
         if colour == COLOURS[0]: (ITEM / 'joints.json').write_text(json.dumps({'nodes': nodes, 'joints': joints}, indent=1))
         print(colour, 'thermal lens at', np.round(info['thermalLens'], 4))

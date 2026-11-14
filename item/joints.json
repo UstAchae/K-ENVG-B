@@ -193,6 +193,40 @@
   "slide": {
    "node": "envgb_slide",
    "axisLocal": "Z (away from the face)"
+  },
+  "pods": {
+   "envgb_pod_R": {
+    "node": "nvg_envgb_psq42_LOD0/envgb_pod_R",
+    "eyecupNode": "envgb_eyecup_LOD0/envgb_eyecup_pod_R",
+    "pivotInDevice": [
+     0.04526,
+     -0.04644,
+     -0.02494
+    ],
+    "axisLocal": [
+     0,
+     -1,
+     0
+    ],
+    "degrees": 90,
+    "rotation": "Quaternion.AngleAxis(90 * t, Vector3.down)"
+   },
+   "envgb_pod_L": {
+    "node": "nvg_envgb_psq42_LOD0/envgb_pod_L",
+    "eyecupNode": "envgb_eyecup_LOD0/envgb_eyecup_pod_L",
+    "pivotInDevice": [
+     -0.03077,
+     -0.04644,
+     -0.02498
+    ],
+    "axisLocal": [
+     0,
+     1,
+     0
+    ],
+    "degrees": 90,
+    "rotation": "Quaternion.AngleAxis(90 * t, Vector3.up)"
+   }
   }
  }
 }

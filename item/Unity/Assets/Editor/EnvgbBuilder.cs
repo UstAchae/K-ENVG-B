@@ -15,7 +15,8 @@ public static class EnvgbBuilder {
  static readonly string Out=Path.GetFullPath(Path.Combine(Application.dataPath,"../../built"));
  public const string DeviceNode="nvg_envgb_psq42_LOD0",ThermalLens="envgb_thermal_lens";
  [Serializable] public class Node {public string name,parent,mesh;public float[] pos,rot;}
- [Serializable] public class Info {public string colour;public float[] thermalLens,onRotation,offRotation;public Node[] nodes;}
+ [Serializable] public class Pod {public string name;public float[] pivot;}
+ [Serializable] public class Info {public string colour;public float[] thermalLens,onRotation,offRotation;public Node[] nodes;public Pod[] pods;}
 
  const float RotationSpeed=0.75187969f;
  static AnimationCurve Curve(){
@@ -105,14 +106,28 @@ public static class EnvgbBuilder {
   gl.AddComponent<MeshFilter>().sharedMesh=glassMesh;
   var glR=gl.AddComponent<MeshRenderer>();glR.sharedMaterial=glass;glR.shadowCastingMode=ShadowCastingMode.Off;glR.receiveShadows=true;renderers.Add(glR);
 
+  // The pods (see prepare.py PODS): each on its own hinge, its pivot on the hinge axis, identity = deployed; the
+  // client turns them. Body and glass in the pod's frame.
+  foreach(var p in info.pods){
+   var pod=new GameObject(p.name);pod.transform.SetParent(lod,false);pod.transform.localPosition=V(p.pivot);made[p.name]=pod.transform;
+   var pm=ReadMesh(src+"/"+p.name+".bin",p.name,gen);
+   pod.AddComponent<MeshFilter>().sharedMesh=pm;
+   var pr=pod.AddComponent<MeshRenderer>();pr.sharedMaterial=body;pr.shadowCastingMode=ShadowCastingMode.On;pr.receiveShadows=true;renderers.Add(pr);
+   var pb=pod.AddComponent<BoxCollider>();pb.center=pm.bounds.center;pb.size=pm.bounds.size;pb.enabled=false;
+   var pg=new GameObject(p.name+"_glass");pg.transform.SetParent(pod.transform,false);
+   pg.AddComponent<MeshFilter>().sharedMesh=ReadMesh(src+"/"+p.name+"_glass.bin",p.name+"_glass",gen);
+   var pgr=pg.AddComponent<MeshRenderer>();pgr.sharedMaterial=glass;pgr.shadowCastingMode=ShadowCastingMode.Off;pgr.receiveShadows=true;renderers.Add(pgr);
+  }
+
   // Slot for the removable eyecups (their own item). The game turns an attached item's root +90 deg about X under
   // the slot node (as every slot node in EFT's prefabs is turned -90), so the node carries -90 and the eyecups,
   // modelled in the device frame, land where they were.
   var slot=new GameObject(EyecupSlot);slot.transform.SetParent(lod,false);slot.transform.localRotation=Quaternion.Euler(-90,0,0);
 
   // Thermal objective: centre of its window, +Z out of the front (the device looks along -Y), +Y toward the mount.
-  var lens=new GameObject(ThermalLens);lens.transform.SetParent(lod,false);
-  lens.transform.localPosition=new Vector3(info.thermalLens[0],info.thermalLens[1],info.thermalLens[2]);
+  // It turns with the right pod, which carries the thermal module.
+  var lens=new GameObject(ThermalLens);lens.transform.SetParent(made["envgb_pod_R"],false);
+  lens.transform.localPosition=V(info.thermalLens)-made["envgb_pod_R"].localPosition;
   lens.transform.localRotation=Quaternion.LookRotation(Vector3.down,Vector3.forward);
 
   // Face light, as the GPNVG-18's "Point light" (off; the game switches it).
@@ -140,7 +155,7 @@ public static class EnvgbBuilder {
  static AssetBundleBuild BuildEyecup(string colour,Shader stub){
   string src=Src+"/"+colour,gen=Gen+"/eyecup_"+colour;Directory.CreateDirectory(gen);AssetDatabase.Refresh();
   string name="envgb_eyecup_"+colour;
-  var mesh=ReadMesh(src+"/eyecup.bin",EyecupNode,gen);
+  var info=JsonUtility.FromJson<Info>(File.ReadAllText(src+"/info.json"));
   // Its own 1024 copies of the maps (the eyecups use a small part of the atlas), so this bundle stays small.
   Texture2D Small(string file,TextureImporterType type,bool srgb){
    string dst=gen+"/"+file;File.Copy(src+"/"+file,dst,true);AssetDatabase.ImportAsset(dst,ImportAssetOptions.ForceSynchronousImport);
@@ -153,13 +168,21 @@ public static class EnvgbBuilder {
   body.SetTexture("_BumpMap",Small("normal.png",TextureImporterType.NormalMap,false));
   AssetDatabase.CreateAsset(body,gen+"/mat_eyecup_body.asset");
   var root=new GameObject(name);
+  // One cup per pod, each on its pod's pivot (the slot's frame is the device's), so the client turns it with its pod.
   var lod=new GameObject(EyecupNode);lod.transform.SetParent(root.transform,false);
-  lod.AddComponent<MeshFilter>().sharedMesh=mesh;
-  var r=lod.AddComponent<MeshRenderer>();r.sharedMaterial=body;r.shadowCastingMode=ShadowCastingMode.On;r.receiveShadows=true;
-  var box=lod.AddComponent<BoxCollider>();box.center=mesh.bounds.center;box.size=mesh.bounds.size;box.enabled=false;
-  var lodGroup=root.AddComponent<LODGroup>();lodGroup.SetLODs(new[]{new LOD(0.01f,new Renderer[]{r})});lodGroup.size=0.1f;
+  var rs=new System.Collections.Generic.List<Renderer>();
+  foreach(var p in info.pods){
+   string cn=p.name.Replace("pod","eyecup_pod");
+   var cup=new GameObject(cn);cup.transform.SetParent(lod.transform,false);cup.transform.localPosition=V(p.pivot);
+   var mesh=ReadMesh(src+"/"+cn+".bin",cn,gen);
+   cup.AddComponent<MeshFilter>().sharedMesh=mesh;
+   var r=cup.AddComponent<MeshRenderer>();r.sharedMaterial=body;r.shadowCastingMode=ShadowCastingMode.On;r.receiveShadows=true;rs.Add(r);
+   var box=cup.AddComponent<BoxCollider>();box.center=mesh.bounds.center;box.size=mesh.bounds.size;box.enabled=false;
+  }
+  var lodGroup=root.AddComponent<LODGroup>();lodGroup.SetLODs(new[]{new LOD(0.01f,rs.ToArray())});lodGroup.size=0.1f;
+  var cb=rs[0].bounds;foreach(var r in rs)cb.Encapsulate(r.bounds);
   var pivot=root.AddComponent<PreviewPivot>();
-  pivot.pivotPosition=mesh.bounds.center;pivot.pivotRotation=new Quaternion(0.0074694254f,0.98476535f,0.04375f,-0.16812912f);pivot.scale=Vector3.one;
+  pivot.pivotPosition=cb.center;pivot.pivotRotation=new Quaternion(0.0074694254f,0.98476535f,0.04375f,-0.16812912f);pivot.scale=Vector3.one;
   pivot.Icon=new PreviewPivot.IconSettings{rotation=new Quaternion(-0.049385615f,-0.94817758f,-0.25407037f,0.1843058f),boundsScale=1.2f,perspective=15,orthographicSize=10};
   string prefab=gen+"/"+name+".prefab";PrefabUtility.SaveAsPrefabAsset(root,prefab);UnityEngine.Object.DestroyImmediate(root);
   return new AssetBundleBuild{assetBundleName=EyecupKey(colour),assetNames=new[]{prefab}};
