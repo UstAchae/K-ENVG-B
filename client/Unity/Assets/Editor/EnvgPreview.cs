@@ -104,12 +104,24 @@ public static class EnvgPreview
         if (frame.TryGetValue("fsHi", out float fsh)) t.FoliageStepHi = fsh;
         if (frame.TryGetValue("lineHot", out float lh)) t.LineHot = lh;
 
+        // -envgReproj: the history followed by the camera itself, with last frame's camera the same as this one (a
+        // still view): it must land exactly where the game's zero motion lands (a check of the reprojection)
+        bool reproj = Arg(args, "-envgReproj") != null;
+        Shader.SetGlobalVector("_EnvgRpOn", new Vector4(reproj ? 1f : 0f, 0f, 0f, 0f));
+        if (reproj)
+        {
+            Shader.SetGlobalMatrix("_EnvgRpCamToWorld", camToWorld);
+            Shader.SetGlobalMatrix("_EnvgRpPrevWorldToCam", camToWorld.inverse);
+            Shader.SetGlobalVector("_EnvgRpTan", new Vector4(t.Tan.x, t.Tan.y, t.Tan.x, t.Tan.y));
+        }
         EnvgChain.Release();   // a fresh gain control: settles in one frame
         // the look first, as the mod sets it before the chain runs (the centre lines' threshold is part of it)
         EnvgChain.SetLook(m, t);
         // as in the game: the edge strength followed over frames (a still view: zero motion), -envgFrames of them
         int frames = int.TryParse(Arg(args, "-envgFrames"), out int nf) ? nf : 12;
         t.Motion = New(fw, fh, RenderTextureFormat.RGHalf);
+        Shader.SetGlobalTexture("_EnvgRpMotion", t.Motion);
+        if (t.Body != null) Shader.SetGlobalTexture("_EnvgRpBody", t.Body);
         t.EdgeHistA = New(fw, fh, RenderTextureFormat.RHalf);
         t.EdgeHistB = New(fw, fh, RenderTextureFormat.RHalf);
         t.MotionReady = frames > 1;

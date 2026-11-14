@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.65.0";
+    public const string Version = "0.66.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -215,6 +215,12 @@ internal static class EnvgFusion
     internal static Material? Material;
     internal static RenderTexture? Picture, Normals, Depth, Albedo, Specular, Heat2x, Seams, GeoSource, GeoAcross, GeoNear, GeoFar, HistoryA, HistoryB, Across, Blurred, Surround, Edges, Presence, Density, Glow, LocalSquare, LocalMoments, Ridge, LitSoft, AlbedoSoft, Motion, EdgeHistA, EdgeHistB, BodyMask, NormalsSoft, Foliage, HeatBase, GrassMask;
     private static Matrix4x4 _camToWorld = Matrix4x4.identity;
+    private static Matrix4x4 _prevWorldToCam = Matrix4x4.identity;
+    private static Vector2 _prevTan = Vector2.one;
+    private static bool _hasPrevCamera, _loggedFollow;
+    private static readonly int RpCamToWorldId = Shader.PropertyToID("_EnvgRpCamToWorld"), RpPrevWorldToCamId = Shader.PropertyToID("_EnvgRpPrevWorldToCam");
+    private static readonly int RpTanId = Shader.PropertyToID("_EnvgRpTan"), RpOnId = Shader.PropertyToID("_EnvgRpOn");
+    private static readonly int RpMotionId = Shader.PropertyToID("_EnvgRpMotion"), RpBodyId = Shader.PropertyToID("_EnvgRpBody");
     private static Vector2 _tan = Vector2.one;
     internal static RenderTexture? Heat => HistoryB;
     private static Material? _i2Material;
@@ -1247,8 +1253,25 @@ internal static class EnvgFusion
         {
             Matrix4x4 unjittered = main.nonJitteredProjectionMatrix;
             Matrix4x4 drawn = main.projectionMatrix;
-            _camToWorld = main.worldToCameraMatrix.inverse;
+            Matrix4x4 worldToCam = main.worldToCameraMatrix;
+            _camToWorld = worldToCam.inverse;
             _tan = new Vector2(1f / unjittered.m00, 1f / unjittered.m11);
+            // the camera now and last frame, as the scene is copied (after anything that moved it before it renders):
+            // the still world's history is followed by them (see the shader's previousUv)
+            Shader.SetGlobalMatrix(RpCamToWorldId, _camToWorld);
+            Shader.SetGlobalMatrix(RpPrevWorldToCamId, _hasPrevCamera ? _prevWorldToCam : worldToCam);
+            Shader.SetGlobalVector(RpTanId, new Vector4(_tan.x, _tan.y, _hasPrevCamera ? _prevTan.x : _tan.x, _hasPrevCamera ? _prevTan.y : _tan.y));
+            Shader.SetGlobalVector(RpOnId, new Vector4(1f, 0f, 0f, 0f));
+            if (Motion != null) Shader.SetGlobalTexture(RpMotionId, Motion);
+            if (BodyMask != null) Shader.SetGlobalTexture(RpBodyId, BodyMask);
+            _prevWorldToCam = worldToCam;
+            _prevTan = _tan;
+            _hasPrevCamera = true;
+            if (!_loggedFollow)
+            {
+                _loggedFollow = true;
+                EnvgFusionPlugin.Log?.LogInfo("ENVG history followed by the camera itself (the depth and where the camera was last frame); the game's motion vectors on people only");
+            }
             // the frame is drawn with a sub-pixel offset (temporal anti-aliasing): read it back from where it is, so
             // the copies stay put
             Vector2 jitter = new Vector2(drawn.m02 - unjittered.m02, drawn.m12 - unjittered.m12) * -0.5f;

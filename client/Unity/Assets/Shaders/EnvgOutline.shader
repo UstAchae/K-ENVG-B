@@ -182,6 +182,32 @@ Shader "Justachae/ENVG/Outline"
 
     sampler2D _EnvgDepth;     // linear depth (m) of the scene, as the thermal picture
 
+    // Where a point of the thermal picture was last frame, for following it in time. The still world (walls, the
+    // ground: everything but people) moves on the screen only as the camera moves, and that is known exactly: this
+    // point's depth, the camera now and the camera last frame, as they were when the scene was copied (after anything
+    // that moves the camera before it renders). The game's own motion vectors don't follow a camera moved that way, and
+    // the history fetched by them landed beside each line (lines dimmed while turning, old lines left behind). People
+    // move on their own: for them the game's per-object vectors. Returns the thermal picture's uv of last frame.
+    float4x4 _EnvgRpCamToWorld, _EnvgRpPrevWorldToCam;
+    float4 _EnvgRpTan;   // xy: tan of half the field of view now (x, y), zw: last frame's
+    float4 _EnvgRpOn;    // x: 1 when the camera's own following is set (the preview: the game's vectors only)
+    sampler2D _EnvgRpMotion, _EnvgRpBody;
+    float2 previousUv(float2 cuv)
+    {
+        float2 su = toScreen(cuv);
+        float2 game = su - tex2Dlod(_EnvgRpMotion, float4(cuv, 0, 0)).xy;
+        if (_EnvgRpOn.x < 0.5 || tex2Dlod(_EnvgRpBody, float4(cuv, 0, 0)).r > 0.25)
+            return toChainPrev(game);
+        float d = tex2Dlod(_EnvgDepth, float4(cuv, 0, 0)).r;
+        float3 view = float3((su.x * 2.0 - 1.0) * _EnvgRpTan.x, (su.y * 2.0 - 1.0) * _EnvgRpTan.y, -1.0) * d;
+        float3 world = mul(_EnvgRpCamToWorld, float4(view, 1.0)).xyz;
+        float3 before = mul(_EnvgRpPrevWorldToCam, float4(world, 1.0)).xyz;
+        if (before.z > -1e-4)
+            return float2(-1.0, -1.0);   // behind last frame's camera: no history
+        float2 then = float2(before.x / (-before.z) / _EnvgRpTan.z, before.y / (-before.z) / _EnvgRpTan.w) * 0.5 + 0.5;
+        return toChainPrev(then);
+    }
+
     // the thermal lens sits above the tubes, its axis aligned with theirs at infinity: something near is seen by it a
     // little lower than by the tubes, by the lens's height over the distance. What shows at a point of the eyepiece is
     // what the thermal lens sees there: the scene that far above it.
@@ -1325,17 +1351,14 @@ Shader "Justachae/ENVG/Outline"
                         hi = max(hi, v);
                     }
                 }
-                float2 previous = toChainPrev(toScreen(i.uv) - tex2D(_EnvgMotion, i.uv).xy);
+                float2 previous = previousUv(i.uv);
                 if (_EnvgTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
                     return float4(c, c, c, 1);
                 float h = tex2D(_EnvgEdgeHistory, previous).r;
                 // held strictly within this frame's neighbourhood, as TAA holds its history: with any slack the
                 // history crept up frame after frame inside foliage (every pixel near a strong one) and filled crowns
                 h = clamp(h, lo, hi);
-                // never below this frame's own strength: in motion the history lands a little off a thin line and
-                // reads weaker, and blended in it dimmed every line while the view moved (the history may only carry a
-                // line over a dip, not take it down)
-                float v = max(lerp(c, h, _EnvgTemporal.x), c);
+                float v = lerp(c, h, _EnvgTemporal.x);
                 return float4(v, v, v, 1);
             }
             ENDCG
@@ -1623,16 +1646,11 @@ Shader "Justachae/ENVG/Outline"
                         hi = max(hi, v);
                     }
                 }
-                float2 motion = tex2D(_EnvgMotion, i.uv).xy;
-                float2 previous = toChainPrev(toScreen(i.uv) - motion);
+                float2 previous = previousUv(i.uv);
                 if (_EnvgHeatTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
                     return c;
                 float4 h = clamp(tex2D(_EnvgHeatHistory, previous), lo, hi);
-                // the history's share falls as the view moves (its sensor pixels this frame): resampled from where it
-                // was, it softens every edge of the heat a little, and soft edges made weak lines while turning; held
-                // still, the full share settles the jitter
-                float px = length(motion / cropOf(_EnvgCrop).zw * _MainTex_TexelSize.zw);
-                return lerp(c, h, _EnvgHeatTemporal.x * exp(-px / 1.5));
+                return lerp(c, h, _EnvgHeatTemporal.x);
             }
             ENDCG
         }
