@@ -21,9 +21,12 @@ Shader "Justachae/ENVG/BodyMask"
                 return UnityObjectToClipPos(vertex);
             }
 
+            // how far this body has cooled toward the air (0 alive; a corpse cools after death): the mask holds its
+            // warmth, 1 at a living body's surface temperature
+            float _EnvgBodyCool;
             float4 frag() : SV_Target
             {
-                return 1;
+                return 1.0 - saturate(_EnvgBodyCool);
             }
             ENDCG
         }

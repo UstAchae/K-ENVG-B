@@ -1307,7 +1307,10 @@ Shader "Justachae/ENVG/Outline"
                 // held strictly within this frame's neighbourhood, as TAA holds its history: with any slack the
                 // history crept up frame after frame inside foliage (every pixel near a strong one) and filled crowns
                 h = clamp(h, lo, hi);
-                float v = lerp(c, h, _EnvgTemporal.x);
+                // never below this frame's own strength: in motion the history lands a little off a thin line and
+                // reads weaker, and blended in it dimmed every line while the view moved (the history may only carry a
+                // line over a dip, not take it down)
+                float v = max(lerp(c, h, _EnvgTemporal.x), c);
                 return float4(v, v, v, 1);
             }
             ENDCG
@@ -1595,11 +1598,16 @@ Shader "Justachae/ENVG/Outline"
                         hi = max(hi, v);
                     }
                 }
-                float2 previous = toChainPrev(toScreen(i.uv) - tex2D(_EnvgMotion, i.uv).xy);
+                float2 motion = tex2D(_EnvgMotion, i.uv).xy;
+                float2 previous = toChainPrev(toScreen(i.uv) - motion);
                 if (_EnvgHeatTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
                     return c;
                 float4 h = clamp(tex2D(_EnvgHeatHistory, previous), lo, hi);
-                return lerp(c, h, _EnvgHeatTemporal.x);
+                // the history's share falls as the view moves (its sensor pixels this frame): resampled from where it
+                // was, it softens every edge of the heat a little, and soft edges made weak lines while turning; held
+                // still, the full share settles the jitter
+                float px = length(motion / cropOf(_EnvgCrop).zw * _MainTex_TexelSize.zw);
+                return lerp(c, h, _EnvgHeatTemporal.x * exp(-px / 1.5));
             }
             ENDCG
         }
