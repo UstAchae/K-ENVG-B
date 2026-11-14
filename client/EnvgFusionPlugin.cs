@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.59.1";
+    public const string Version = "0.60.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -39,9 +39,11 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
     // the device's four modes, in the order the arrow keys step through them
     internal static readonly string[] Modes = { ShowI2, ShowOutline, ShowFusion, ShowBlackHot };
     internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? NextMode, PreviousMode, GainUp, GainDown;
-    internal static ConfigEntry<int>? I2Level;
-    internal const int I2Steps = 10;
-    internal static float GainShownUntil;   // the I2 gain bar shows for a moment after a change
+    internal static ConfigEntry<float>? I2Level;
+    private const float GainFullTravel = 2.5f;   // seconds for the gain to go from dark to full with an arrow held
+    internal static float GainShownUntil;   // the I2 gain bar shows while it changes and for a moment after
+    private static float _gainLive = -1f;    // the gain while an arrow is held (saved when it is let go)
+    internal static float GainNow => _gainLive >= 0f ? _gainLive : Mathf.Clamp01(I2Level?.Value ?? 1f);
 
     private void Awake()
     {
@@ -64,11 +66,11 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         PreviousMode = Config.Bind(Section, "上一个模式", new BepInEx.Configuration.KeyboardShortcut(KeyCode.LeftArrow),
             new ConfigDescription("切到上一个模式。", null, new ConfigurationManagerAttributes { Order = 8 }));
         GainUp = Config.Bind(Section, "夜视增益 +", new BepInEx.Configuration.KeyboardShortcut(KeyCode.UpArrow),
-            new ConfigDescription("调高夜视管增益一档（目镜里左侧弹出黄色的 I2 GAIN 竖条）。", null, new ConfigurationManagerAttributes { Order = 8 }));
+            new ConfigDescription("调高夜视管增益：点一下微调，按住连续变化（从 0 到满约 2.5 秒）。调节时目镜热像框右侧显示黄色的 I2 GAIN 竖条。", null, new ConfigurationManagerAttributes { Order = 8 }));
         GainDown = Config.Bind(Section, "夜视增益 -", new BepInEx.Configuration.KeyboardShortcut(KeyCode.DownArrow),
-            new ConfigDescription("调低夜视管增益一档；调到 0 夜视画面全黑，只剩热像（轮廓模式下就只有轮廓）。", null, new ConfigurationManagerAttributes { Order = 8 }));
-        I2Level = Config.Bind(Section, "夜视增益档位", I2Steps,
-            new ConfigDescription("夜视管增益：0 到 10 档（游戏里用 ↑ ↓ 调）。0 是关掉夜视画面，只看热像。", new AcceptableValueRange<int>(0, I2Steps), new ConfigurationManagerAttributes { Order = 8 }));
+            new ConfigDescription("调低夜视管增益：点一下微调，按住连续变化；调到 0 夜视画面全黑，只剩热像（轮廓模式下就只有轮廓）。", null, new ConfigurationManagerAttributes { Order = 8 }));
+        I2Level = Config.Bind(Section, "夜视管增益", 1f,
+            new ConfigDescription("夜视管增益，0 到 1（游戏里按住 ↑ ↓ 调）。0 是关掉夜视画面，只看热像。", new AcceptableValueRange<float>(0f, 1f), new ConfigurationManagerAttributes { Order = 8 }));
         Brightness = Config.Bind(Section, "轮廓亮度", 1f,
             new ConfigDescription("轮廓线有多亮。", new AcceptableValueRange<float>(0f, 4f), new ConfigurationManagerAttributes { Order = 8 }));
         Amount = Config.Bind(Section, "轮廓多少", 1f,
@@ -171,12 +173,24 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
                 Show.Value = Modes[at];
                 EnvgFusion.ModeChanged();
             }
-            // ↑ ↓: the tubes' gain, a step at a time
-            int gain = GainUp != null && GainUp.Value.IsDown() ? 1 : GainDown != null && GainDown.Value.IsDown() ? -1 : 0;
-            if (gain != 0 && I2Level != null)
+            // ↑ ↓: the tubes' gain, smoothly: a tap nudges it, held it runs (dark to full in GainFullTravel)
+            if (I2Level != null)
             {
-                I2Level.Value = Mathf.Clamp(I2Level.Value + gain, 0, I2Steps);
-                GainShownUntil = Time.unscaledTime + 2.5f;
+                bool up = GainUp != null && GainUp.Value.IsPressed(), down = GainDown != null && GainDown.Value.IsPressed();
+                bool tapUp = GainUp != null && GainUp.Value.IsDown(), tapDown = GainDown != null && GainDown.Value.IsDown();
+                float change = (tapUp ? 0.03f : 0f) - (tapDown ? 0.03f : 0f) + ((up ? 1f : 0f) - (down ? 1f : 0f)) * Time.unscaledDeltaTime / GainFullTravel;
+                if (up || down || tapUp || tapDown)
+                {
+                    float level = Mathf.Clamp01(GainNow + change);
+                    // saved only when it settles (the config file is written on every change)
+                    _gainLive = level;
+                    GainShownUntil = Time.unscaledTime + 2.5f;
+                }
+                else if (_gainLive >= 0f)
+                {
+                    I2Level.Value = _gainLive;
+                    _gainLive = -1f;
+                }
             }
         }
         // the eyepieces (when they take it) dim both tubes, in every mode, from the saved level on (sent only on a change)
@@ -732,7 +746,7 @@ internal static class EnvgFusion
     }
     private static CommandBuffer? _fuseDraw;
     private static readonly int I2DimId = Shader.PropertyToID("_EnvgI2Dim");
-    internal static float I2Gain => (EnvgFusionPlugin.I2Level?.Value ?? EnvgFusionPlugin.I2Steps) / (float)EnvgFusionPlugin.I2Steps;
+    internal static float I2Gain => EnvgFusionPlugin.GainNow;
 
     // the device's symbology in the thermal rectangle (where the eyepieces' field puts it), as bright as the picture
     // has faded in
@@ -744,7 +758,7 @@ internal static class EnvgFusion
         var centre = new Vector2(at.x * dest.width, at.y * dest.height);
         var half = new Vector2(0.68f * radius / aspect * dest.width, 0.52f * radius * dest.height);
         EnvgHud.Draw(cb, Material, _main, dest, centre, half, new Vector2(at.x, at.y), show, settled,
-            Time.unscaledTime < EnvgFusionPlugin.GainShownUntil ? EnvgFusionPlugin.I2Level?.Value ?? EnvgFusionPlugin.I2Steps : -1);
+            Time.unscaledTime < EnvgFusionPlugin.GainShownUntil ? EnvgFusionPlugin.GainNow : -1f);
     }
 
 

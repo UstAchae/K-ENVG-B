@@ -128,8 +128,8 @@ internal static class EnvgHud
     // ---- drawing ----
 
     // Adds the symbology to the eyepiece picture: within the thermal rectangle (centre and half sizes in dest pixels).
-    // gainLevel: the I2 gain bar's level (0..10) while it shows, -1 when it doesn't
-    internal static void Draw(CommandBuffer cb, Material m, Camera main, RenderTexture dest, Vector2 centre, Vector2 half, Vector2 axisUv, string mode, float strength, int gainLevel)
+    // gainLevel: the I2 gain bar's level (0..1) while it shows, below 0 when it doesn't
+    internal static void Draw(CommandBuffer cb, Material m, Camera main, RenderTexture dest, Vector2 centre, Vector2 half, Vector2 axisUv, string mode, float strength, float gainLevel)
     {
         if (!EnsureFont() || _font == null || strength <= 0f)
             return;
@@ -213,18 +213,19 @@ internal static class EnvgHud
         Put(mode == EnvgFusionPlugin.ShowOutline ? "OUTLINE" : mode == EnvgFusionPlugin.ShowFusion ? "WHITE HOT" : "BLACK HOT", ref n);
         Text(_buf, n, centre.x, bottom, ts, 0.5f);
 
-        // left of the thermal rectangle, for a moment after a change: the tubes' gain, a yellow bar as the device
-        // shows it (an outline filled from the bottom), "I2 GAIN" under it
-        if (gainLevel >= 0)
+        // right of the thermal rectangle (in the right eye's lens: left of it lies the left eye's view, which shows the
+        // tube's own picture), while it changes and a moment after: the tubes' gain, a yellow bar as the device shows
+        // it (an outline filled from the bottom), "I2 GAIN" under it
+        if (gainLevel >= 0f)
         {
             _paint = GainColour;
-            float gx = centre.x - half.x - 2.2f * ts, gTop = centre.y + 0.55f * half.y, gBottom = centre.y - 0.45f * half.y;
+            float gx = centre.x + half.x + 2.2f * ts, gTop = centre.y + 0.55f * half.y, gBottom = centre.y - 0.45f * half.y;
             float gw = 0.32f * ts, gMid = 0.5f * (gTop + gBottom), gHalf = 0.5f * (gTop - gBottom);
             Box(gx, gTop, gw, line * 0.5f, 0.3f * ts);
             Box(gx, gBottom, gw, line * 0.5f, 0.3f * ts);
             Box(gx - gw, gMid, line * 0.5f, gHalf, 0.3f * ts);
             Box(gx + gw, gMid, line * 0.5f, gHalf, 0.3f * ts);
-            float inner = gHalf - 2f * line, filled = 2f * inner * gainLevel / 10f;
+            float inner = gHalf - 2f * line, filled = 2f * inner * Mathf.Clamp01(gainLevel);
             if (filled > 0.5f)
                 Box(gx, gBottom + 2f * line + 0.5f * filled, gw - 2f * line, 0.5f * filled, 0.25f * ts);
             n = 0;
