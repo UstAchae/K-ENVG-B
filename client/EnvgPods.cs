@@ -5,12 +5,12 @@ namespace EnvgFusion;
 
 // The ENVG-B's two eyepiece pods swing up on their own hinges (as the real one's do), each by its key. The model has a
 // node per pod (envgb_pod_L / envgb_pod_R under the device, envgb_eyecup_pod_L / _R in the eyecup): identity is down,
-// the swing is about the hinge's own axis, 150 degrees outward and up (the item's joints.json, "pods"). We turn those
+// the swing is about the hinge's own axis, 90 degrees outward and up (the item's joints.json, "pods"). We turn those
 // nodes; K-3PS-C reads them for the eyepieces. A pod's tube goes off once it leaves its place, as on real articulating
 // goggles: the right pod carries the thermal module, so the thermal picture and the symbology need it down.
 internal static class EnvgPods
 {
-    private const float Swing = 150f;      // degrees, up and out (clears the bridge, the mount and the other pod)
+    private const float Swing = 90f;       // degrees, up and out (farther, the eyecups reach the helmet's brim)
     private const float Travel = 0.4f;     // seconds for a pod to swing all the way
     private const float Down = 0.02f;      // still in its place below this share of the swing
 
