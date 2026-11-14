@@ -230,17 +230,17 @@ Shader "Justachae/ENVG/Outline"
     }
 
     // The sights' glass: long-wave infrared does not go through glass, so the thermal lens sees a red dot's or a
-    // holographic sight's window (and a scope's lens) as a blank, while the tubes see through it. The game draws those
-    // windows itself every frame into _ScopeMask (its own thermal and night vision read it): r the scope's lens, b the
-    // collimators' glass within 3 m, g the active reticle (not glass). Screen uv; nothing thermal is shown there.
-    sampler2D _ScopeMask;
-    float4 _EnvgScopeMaskOn;   // x: 1 in the game (the preview has no such texture)
+    // holographic sight's window (and a scope's lens) as a blank, while the tubes see through it. The glass the tubes
+    // see through, at the frame's own resolution (EnvgGlassMask, drawn over the frame's depth: the sight's frame in
+    // front of its window left out), read where this frame's sub-pixel offset put it. Screen uv; no thermal picture
+    // there.
+    sampler2D _EnvgGlassMask;
+    float4 _EnvgGlassOn;   // x: 1 when the mask was drawn this frame, yz: this frame's sub-pixel offset (uv)
     float sightGlass(float2 uv)
     {
-        if (_EnvgScopeMaskOn.x < 0.5)
+        if (_EnvgGlassOn.x < 0.5)
             return 0.0;
-        float4 m = tex2D(_ScopeMask, uv);
-        return saturate(max(m.r, m.b));
+        return saturate(tex2D(_EnvgGlassMask, uv + _EnvgGlassOn.yz).r);
     }
 
     // the overlay's light adds to the tube's: where the tube is already near white, the copper hardly changes what the

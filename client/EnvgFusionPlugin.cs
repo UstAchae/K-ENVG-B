@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.62.0";
+    public const string Version = "0.63.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -154,8 +154,9 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             Log.LogWarning("Patching the grass draw failed; no grass in the thermal picture: " + e.Message);
         }
         EyecupSlotIcon.Patch(harmony);
-        // the sights' glass from the game's own scope mask (see the shader's sightGlass)
-        Shader.SetGlobalVector("_EnvgScopeMaskOn", new Vector4(1f, 0f, 0f, 0f));
+        // the sights' glass: the red dots and holographic sights the game has enabled, as it announces them
+        CollimatorSight.OnCollimatorEnabled += EnvgFusion.SightEnabled;
+        CollimatorSight.OnCollimatorDisabled += EnvgFusion.SightDisabled;
         MethodInfo? nvPreCull = AccessTools.Method(typeof(BSG.CameraEffects.NightVision), "OnPreCull");
         if (nvPreCull != null)
             harmony.Patch(nvPreCull, postfix: new HarmonyMethod(typeof(EnvgFusion), nameof(EnvgFusion.AfterNightVisionPreCull)));
@@ -740,7 +741,6 @@ internal static class EnvgFusion
         _fuseDraw.SetRenderTarget(dest);
         _fuseDraw.SetViewport(new Rect(0f, 0f, dest.width, dest.height));
         _fuseDraw.DrawMesh(_fuseQuad, Matrix4x4.identity, Material, 0, pass);
-        NoteScopeMask();
         Symbology(_fuseDraw, dest, at, show, settled);
         Graphics.ExecuteCommandBuffer(_fuseDraw);
         // the screen's own draw keeps the field at the centre
@@ -755,17 +755,6 @@ internal static class EnvgFusion
     }
     private static CommandBuffer? _fuseDraw;
 
-    // once: whether the game's scope mask (the sights' glass) is there to read while the thermal picture is drawn
-    private static bool _loggedScopeMask;
-    private static readonly int ScopeMaskId = Shader.PropertyToID("_ScopeMask");
-    private static void NoteScopeMask()
-    {
-        if (_loggedScopeMask)
-            return;
-        _loggedScopeMask = true;
-        Texture? mask = Shader.GetGlobalTexture(ScopeMaskId);
-        EnvgFusionPlugin.Log?.LogInfo("ENVG sights' glass from the game's scope mask: " + (mask != null ? mask.name + " " + mask.width + "x" + mask.height : "none (no glass left out)"));
-    }
     private static readonly int I2DimId = Shader.PropertyToID("_EnvgI2Dim");
     internal static float I2Gain => EnvgFusionPlugin.GainNow;
 
@@ -1034,6 +1023,8 @@ internal static class EnvgFusion
                     _i2Shader = shader;
                 else if (shader.name == "Justachae/ENVG/BodyMask" && shader.isSupported)
                     _bodyMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
+                else if (shader.name == "Justachae/ENVG/GlassMask" && shader.isSupported)
+                    _glassMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
             }
         }
         if (_shader == null || !_shader.isSupported)
@@ -1283,6 +1274,81 @@ internal static class EnvgFusion
     // frame's depth into a mask, averaged to the sensor's pixels like the other copies. Each one's renderers are
     // collected once and again only when one of them is gone (gear changed).
     private static Material? _bodyMaterial;
+
+    // ---- the sights' glass (long-wave infrared does not pass glass: no thermal picture through a sight's window) ----
+    private static Material? _glassMaterial;
+    private static readonly HashSet<CollimatorSight> _sights = new HashSet<CollimatorSight>();
+    internal static void SightEnabled(CollimatorSight sight) => _sights.Add(sight);
+    internal static void SightDisabled(CollimatorSight sight) => _sights.Remove(sight);
+    private static RenderTexture? _glassMask;
+    private static readonly int GlassMaskId = Shader.PropertyToID("_EnvgGlassMask");
+    private static readonly int GlassOnId = Shader.PropertyToID("_EnvgGlassOn");
+    private const float SightReach = 3f;   // as the game itself: sights farther than this are not looked through
+    private static bool _loggedGlass;
+
+    // The glass the tubes see through, drawn into a mask at the frame's own size over the frame's depth (after its opaque
+    // scene: whatever stands in front of the glass, the sight's own frame first, is left out). The reticle planes of
+    // the red dots and holographic sights near the camera, and the lens of the scope looked through.
+    private static void DrawGlass(CommandBuffer cb, Camera main, Vector2 jitter)
+    {
+        Renderer? lens = null;
+        try
+        {
+            lens = EFT.CameraControl.CameraManager.Instance?.OpticCameraManager?.CurrentOpticSight?.LensRenderer;
+        }
+        catch (System.Exception)
+        {
+        }
+        bool any = lens != null;
+        Vector3 eye = main.transform.position;
+        foreach (CollimatorSight sight in _sights)
+            if (sight != null && sight.CollimatorMeshRenderer != null && (sight.CollimatorMeshRenderer.transform.position - eye).sqrMagnitude <= SightReach * SightReach)
+            {
+                any = true;
+                break;
+            }
+        if (!any || _glassMaterial == null)
+        {
+            Shader.SetGlobalVector(GlassOnId, Vector4.zero);
+            return;
+        }
+        int w = Mathf.Max(main.pixelWidth, 1), h = Mathf.Max(main.pixelHeight, 1);
+        if (_glassMask == null || _glassMask.width != w || _glassMask.height != h)
+        {
+            if (_glassMask != null)
+            {
+                _glassMask.Release();
+                Object.Destroy(_glassMask);
+            }
+            _glassMask = new RenderTexture(w, h, 0, RenderTextureFormat.R8) { name = "Justachae ENVG sights' glass", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            _glassMask.Create();
+        }
+        cb.SetRenderTarget(_glassMask, BuiltinRenderTextureType.CameraTarget);
+        cb.ClearRenderTarget(false, true, Color.clear);
+        int drawn = 0;
+        foreach (CollimatorSight sight in _sights)
+        {
+            MeshRenderer? r = sight != null ? sight.CollimatorMeshRenderer : null;
+            if (r == null || !r.enabled || !r.isVisible || !r.gameObject.activeInHierarchy || (r.transform.position - eye).sqrMagnitude > SightReach * SightReach)
+                continue;
+            cb.DrawRenderer(r, _glassMaterial, 0, 0);
+            drawn++;
+        }
+        if (lens != null && lens.enabled && lens.gameObject.activeInHierarchy)
+        {
+            cb.DrawRenderer(lens, _glassMaterial, 0, 0);
+            drawn++;
+        }
+        cb.SetGlobalTexture(GlassMaskId, _glassMask);
+        // read where this frame's sub-pixel offset put the glass (the picture it is laid over is the settled one)
+        Shader.SetGlobalVector(GlassOnId, new Vector4(drawn > 0 ? 1f : 0f, jitter.x, jitter.y, 0f));
+        if (!_loggedGlass && drawn > 0)
+        {
+            _loggedGlass = true;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG sights' glass: " + drawn + " drawn over the frame's depth into a " + w + "x" + h + " mask (no thermal picture through it)"
+                + (lens != null ? ", a scope's lens among them" : ""));
+        }
+    }
     private static readonly Dictionary<EFT.Player, Renderer[]> _bodyRenderers = new Dictionary<EFT.Player, Renderer[]>();
     private static readonly List<EFT.Player> _bodyGone = new List<EFT.Player>();
     private static readonly int BodyTempId = Shader.PropertyToID("_EnvgBodyFull");
@@ -1478,6 +1544,7 @@ internal static class EnvgFusion
         _mainCopy.Blit(normals, depth, Material, 12);
         DrawBodies(_mainCopy);
         _mainCopy.SetGlobalVector(JitterId, Vector4.zero);
+        DrawGlass(_mainCopy, main, jitter);
 
         if ((main.depthTextureMode & DepthTextureMode.MotionVectors) == 0)
             main.depthTextureMode |= DepthTextureMode.MotionVectors | DepthTextureMode.Depth;
