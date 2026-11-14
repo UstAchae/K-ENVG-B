@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.60.1";
+    public const string Version = "0.60.2";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -66,7 +66,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         PreviousMode = Config.Bind(Section, "上一个模式", new BepInEx.Configuration.KeyboardShortcut(KeyCode.LeftArrow),
             new ConfigDescription("切到上一个模式。", null, new ConfigurationManagerAttributes { Order = 8 }));
         GainUp = Config.Bind(Section, "夜视增益 +", new BepInEx.Configuration.KeyboardShortcut(KeyCode.UpArrow),
-            new ConfigDescription("调高夜视管增益：点一下微调，按住连续变化（从 0 到满约 2.5 秒）。调节时目镜热像框右侧显示黄色的 I2 GAIN 竖条。", null, new ConfigurationManagerAttributes { Order = 8 }));
+            new ConfigDescription("调高夜视管增益：点一下微调，按住连续变化（从 0 到满约 2.5 秒）。调节时目镜热像框里靠左边显示黄色的 I2 GAIN 竖条。", null, new ConfigurationManagerAttributes { Order = 8 }));
         GainDown = Config.Bind(Section, "夜视增益 -", new BepInEx.Configuration.KeyboardShortcut(KeyCode.DownArrow),
             new ConfigDescription("调低夜视管增益：点一下微调，按住连续变化；调到 0 夜视画面全黑，只剩热像（轮廓模式下就只有轮廓）。", null, new ConfigurationManagerAttributes { Order = 8 }));
         I2Level = Config.Bind(Section, "夜视管增益", 1f,
@@ -727,8 +727,8 @@ internal static class EnvgFusion
         // the tube's picture at the set gain (0: the tubes dark, the thermal picture alone)
         // (handed to the eyepieces for both tubes when they take it; else applied here to the right one)
         EyepieceLink.SetGain(I2Gain);
-        // (a plain copy whenever nothing is to be dimmed here: the copy through our own pass, with the eyepieces already
-        // dimming, left green fringes along every bright edge of the tube's picture)
+        // (a plain copy whenever nothing is to be dimmed here: the copy through our own pass 37 put green fringes along
+        // every bright edge of the tube's picture, in game; found by the user, gone with the plain copy)
         bool dimHere = !EyepieceLink.TakesGain && I2Gain < 0.999f;
         _fuseDraw.SetGlobalVector(I2DimId, new Vector4(dimHere ? 1f - I2Gain : 0f, 0f, 0f, 0f));
         if (dimHere)

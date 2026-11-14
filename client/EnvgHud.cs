@@ -213,13 +213,13 @@ internal static class EnvgHud
         Put(mode == EnvgFusionPlugin.ShowOutline ? "OUTLINE" : mode == EnvgFusionPlugin.ShowFusion ? "WHITE HOT" : "BLACK HOT", ref n);
         Text(_buf, n, centre.x, bottom, ts, 0.5f);
 
-        // right of the thermal rectangle (in the right eye's lens: left of it lies the left eye's view, which shows the
-        // tube's own picture), while it changes and a moment after: the tubes' gain, a yellow bar as the device shows
-        // it (an outline filled from the bottom), "I2 GAIN" under it
+        // inside the thermal rectangle along its left edge (outside it, to the left, lies the left eye's view, which shows
+        // the tube's own picture), while it changes and a moment after: the tubes' gain, a yellow bar as the device
+        // shows it (an outline filled from the bottom), "I2 GAIN" under it, both kept within the rectangle
         if (gainLevel >= 0f)
         {
             _paint = GainColour;
-            float gx = centre.x + half.x + 2.2f * ts, gTop = centre.y + 0.55f * half.y, gBottom = centre.y - 0.45f * half.y;
+            float gx = centre.x - half.x + 0.9f * ts, gTop = centre.y + 0.55f * half.y, gBottom = centre.y - 0.45f * half.y;
             float gw = 0.32f * ts, gMid = 0.5f * (gTop + gBottom), gHalf = 0.5f * (gTop - gBottom);
             Box(gx, gTop, gw, line * 0.5f, 0.3f * ts);
             Box(gx, gBottom, gw, line * 0.5f, 0.3f * ts);
@@ -230,7 +230,7 @@ internal static class EnvgHud
                 Box(gx, gBottom + 2f * line + 0.5f * filled, gw - 2f * line, 0.5f * filled, 0.25f * ts);
             n = 0;
             Put("I2 GAIN", ref n);
-            Text(_buf, n, gx, gBottom - 1.2f * ts, 0.7f * ts, 0.5f);
+            Text(_buf, n, gx - gw, gBottom - 1.2f * ts, 0.7f * ts, 0f);
             _paint = Own;
         }
 
