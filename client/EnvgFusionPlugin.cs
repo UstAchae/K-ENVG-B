@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.61.0";
+    public const string Version = "0.61.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1276,11 +1276,26 @@ internal static class EnvgFusion
 
     // The dead, from the moment they die (as the game's own list of the living drops them): when, to cool them. Kept
     // per world; a corpse the game removes (destroyed) leaves the list. The one looking is never among them.
-    // Clothed bodies' surfaces (skin, the eyes) reach the air in about one and a half to two hours (post-mortem
-    // infrared studies): an exponential with 90 minutes, in real time.
-    private const float CorpseCooling = 90f * 60f;
+    // Times on the game's own clock (seven times real time in a raid), as the day's heat and the night's cooling: the
+    // bare skin and the eyes reach the air in about one and a half to two hours (post-mortem infrared studies), a
+    // clothed trunk more slowly, heat still coming through from inside: an exponential with two and a half hours.
+    private const float CorpseCooling = 150f * 60f;
+
+    // the game's clock in seconds (its date and time in a raid; real time where it has none)
+    private static double GameSeconds()
+    {
+        try
+        {
+            if (Comfort.Common.Singleton<EFT.GameWorld>.Instantiated && Comfort.Common.Singleton<EFT.GameWorld>.Instance.GameDateTime != null)
+                return Comfort.Common.Singleton<EFT.GameWorld>.Instance.GameDateTime.Calculate().Ticks / 1e7;
+        }
+        catch (System.Exception)
+        {
+        }
+        return Time.time;
+    }
     private static readonly HashSet<EFT.Player> _alive = new HashSet<EFT.Player>();
-    private static readonly Dictionary<EFT.Player, float> _corpses = new Dictionary<EFT.Player, float>();
+    private static readonly Dictionary<EFT.Player, double> _corpses = new Dictionary<EFT.Player, double>();
     private static readonly List<EFT.Player> _scratch = new List<EFT.Player>();
     private static object? _deathsWorld;
     private static bool _loggedCorpse;
@@ -1307,11 +1322,11 @@ internal static class EnvgFusion
         {
             _alive.Remove(gone);
             if (gone != null && gone.PlayerBody != null)
-                _corpses[gone] = Time.time;
+                _corpses[gone] = GameSeconds();
         }
         // corpses the game has removed
         _scratch.Clear();
-        foreach (KeyValuePair<EFT.Player, float> corpse in _corpses)
+        foreach (KeyValuePair<EFT.Player, double> corpse in _corpses)
             if (corpse.Key == null || corpse.Key.PlayerBody == null)
                 _scratch.Add(corpse.Key!);
         foreach (EFT.Player gone in _scratch)
@@ -1369,13 +1384,13 @@ internal static class EnvgFusion
         // the dead, cooling: their warmth falls toward the air after death (Newton's law), the mask holds how warm
         if (_corpses.Count > 0)
         {
-            float now = Time.time;
-            foreach (KeyValuePair<EFT.Player, float> corpse in _corpses)
+            double now = GameSeconds();
+            foreach (KeyValuePair<EFT.Player, double> corpse in _corpses)
             {
                 EFT.Player dead = corpse.Key;
                 if (dead == null || dead.PlayerBody == null)
                     continue;
-                float left = Mathf.Exp(-(now - corpse.Value) / CorpseCooling);
+                float left = Mathf.Exp(-(float)System.Math.Max(now - corpse.Value, 0.0) / CorpseCooling);
                 if (left < 0.02f)
                     continue;
                 if (!_bodyRenderers.TryGetValue(dead, out Renderer[] renderers) || System.Array.Exists(renderers, r => r == null))
@@ -1396,10 +1411,13 @@ internal static class EnvgFusion
                 if (!_loggedCorpse)
                 {
                     _loggedCorpse = true;
-                    float air = EnvgFusionPlugin.AirTemperature?.Value ?? 15f;
+                    // (the body's surface as the chosen heat source has it: the game's method 34 C, our model 28 C)
+                    bool native = EnvgFusionPlugin.HeatSource?.Value == EnvgFusionPlugin.SourceNative;
+                    float air = EnvgFusionPlugin.AirTemperature?.Value ?? 15f, alive = native ? 34f : 28f;
                     EnvgFusionPlugin.Log?.LogInfo("ENVG body heat: a body (" + dead.Profile?.Nickname + ") in the heat mask "
-                        + (now - corpse.Value).ToString("F0") + " s after death, warmth " + left.ToString("F2") + " (about "
-                        + (air + (28f - air) * left).ToString("F1") + " C at the surface, cooling over " + (CorpseCooling / 60f).ToString("F0") + " min)");
+                        + ((now - corpse.Value) / 60.0).ToString("F0") + " game minutes after death, warmth " + left.ToString("F2") + " (about "
+                        + (air + (alive - air) * left).ToString("F1") + " C at the surface against " + air.ToString("F0")
+                        + " C air, cooling over " + (CorpseCooling / 60f).ToString("F0") + " game minutes)");
                 }
             }
             cb.SetGlobalFloat(BodyCoolId, 0f);
