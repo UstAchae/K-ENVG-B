@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.67.1";
+    public const string Version = "0.67.2";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -424,7 +424,9 @@ internal static class EnvgFusion
         // the real device's rectangle: 0.68 of the tubes' circle (the screen's height) wide, 0.52 high, times the field: half sizes in uv
         float halfH = 0.26f * field, halfW = 0.34f * field * height / Mathf.Max(width, 1);
         Material!.SetVector(FieldId, new Vector4(halfW, halfH, 4f / Mathf.Max(height, 1), field > 0f ? 1f : 0f));
-        Material.SetVector(FieldAtId, Vector4.zero);
+        // (over the screen: at its centre, faded as the right pod swings up)
+        float shown = EnvgPods.RightShown;
+        Material.SetVector(FieldAtId, shown < 1f ? new Vector4(0.5f, 0.5f, shown, 1f) : Vector4.zero);
         float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
         Material.SetVector(ParallaxId, new Vector4(lens, 0.5f / Mathf.Max(_tan.y, 1e-4f), 0f, 0f));
     }
@@ -648,7 +650,7 @@ internal static class EnvgFusion
                 _tubeFrame = Time.frameCount;
                 MeasureBrightness(_main);
             }
-            if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || !EnvgPods.RightDown)
+            if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || EnvgPods.RightShown <= 0f)
                 return;
             Graphics.ExecuteCommandBuffer(_overlayDraw);
             RequestHistogram();
@@ -714,7 +716,7 @@ internal static class EnvgFusion
             return false;
         string show = EnvgFusionPlugin.Show?.Value ?? EnvgFusionPlugin.ShowOutline;
         // (the right pod swung up: its tube, the thermal module with it, is off)
-        if (show == EnvgFusionPlugin.ShowI2 || !EnvgPods.RightDown)
+        if (show == EnvgFusionPlugin.ShowI2 || EnvgPods.RightShown <= 0f)
             return false;
         if (_fusedFrame != Time.frameCount)
         {
@@ -750,7 +752,8 @@ internal static class EnvgFusion
         float radius = Mathf.Max(at.z, 1e-3f), aspect = Mathf.Max(at.w, 1e-3f);
         float share = EnvgFusionPlugin.ThermalField?.Value ?? 1f;
         Material.SetVector(FieldId, new Vector4(0.68f * radius * share / aspect, 0.52f * radius * share, 4f / Mathf.Max(dest.height, 1), share > 0f ? 1f : 0f));
-        float settled = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.85f, 1f, EyepieceLink.Deployed));
+        // faded in as the device settles, and out as the right pod (with the thermal module) swings up
+        float settled = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.85f, 1f, EyepieceLink.Deployed)) * EnvgPods.RightShown;
         Material.SetVector(FieldAtId, new Vector4(at.x, at.y, settled, 1f));
         // the real device lays the thermal picture into the right eye only, whose tube sits right of the thermal
         // lens (ENVG-B: lens x 0.0023, right eyepiece x 0.0308 in the model): so against that eye the lens is up and left
@@ -1191,7 +1194,7 @@ internal static class EnvgFusion
             _mainCopy.Clear();
         if (!Active || camera != _main || _main == null || Material == null)
             return;
-        if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || !EnvgPods.RightDown)
+        if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || EnvgPods.RightShown <= 0f)
         {
             _mainCopy?.Clear();
             _motionCopy?.Clear();

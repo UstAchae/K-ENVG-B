@@ -31,6 +31,10 @@ internal static class EnvgPods
     private const int LookFor = 30;   // frames to keep looking after a change
 
     internal static bool RightDown => _right < Down;
+    // the thermal picture's share as the right pod leaves its place: full while down, faded out over the first third
+    // of the swing (not gone at once), back in the same way
+    private const float FadeBy = 0.35f;
+    internal static float RightShown => 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, FadeBy, _right));
     internal static bool LeftDown => _left < Down;
 
     internal static void Toggle(bool right)
