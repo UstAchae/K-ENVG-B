@@ -25,6 +25,32 @@ internal static class EnvgProbe
     internal static Vector3 LensOffsetCm;
     internal static string What = "";
 
+    // TEMPORARY: the camera itself at the thermal lens (its turn and field kept), set after K-3PS-C has placed it for
+    // the frame and put back once it has drawn; the gun stays where the game put it.
+    internal static bool LensView;
+    private static Camera? _movedCamera;
+    private static Vector3 _cameraWas;
+
+    internal static void LensViewPreCull(Camera camera)
+    {
+        if (!LensView || _movedCamera != null || camera == null || camera != Camera.main)
+            return;
+        Transform? lens = EnvgPods.ThermalLens;
+        if (lens == null)
+            return;
+        _cameraWas = camera.transform.position;
+        camera.transform.position = lens.position;
+        _movedCamera = camera;
+    }
+
+    internal static void LensViewPostRender(Camera camera)
+    {
+        if (_movedCamera == null || camera != _movedCamera)
+            return;
+        camera.transform.position = _cameraWas;
+        _movedCamera = null;
+    }
+
     internal static void SetShader(Shader shader)
     {
         if (shader != null && shader.isSupported)

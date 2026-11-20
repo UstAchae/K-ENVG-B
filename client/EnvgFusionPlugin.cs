@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.68.2";
+    public const string Version = "0.68.3";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -38,6 +38,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
     internal const string ShowOutline = "轮廓", ShowFusion = "白热融合", ShowBlackHot = "黑热融合", ShowI2 = "纯夜视";
     // the device's four modes, in the order the arrow keys step through them
     internal static readonly string[] Modes = { ShowI2, ShowOutline, ShowFusion, ShowBlackHot };
+    internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? LensView;   // TEMPORARY
     internal static ConfigEntry<BepInEx.Configuration.KeyboardShortcut>? NextMode, PreviousMode, GainUp, GainDown, PodLeft, PodRight;
     internal static ConfigEntry<float>? I2Level;
     private const float GainFullTravel = 2.5f;   // seconds for the gain to go from dark to full with an arrow held
@@ -52,6 +53,8 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         // the thermal channel works on its own whenever the ENVG-B is worn and flipped down; this is for testing only
         Probe = Config.Bind(Advanced, "调试：热像物镜探针", true,
             new ConfigDescription("临时：在屏幕左下角显示从热像物镜位置看到的手中枪械（灰色枪体、青色瞄具玻璃、铜色轮廓），用来核对热像物镜的视角。", null, new ConfigurationManagerAttributes { IsAdvanced = true }));
+        LensView = Config.Bind(Advanced, "调试：镜头移到热像物镜", new BepInEx.Configuration.KeyboardShortcut(KeyCode.Home),
+            new ConfigDescription("临时：按一下把你的镜头移到热像物镜的位置（朝向不变，枪不跟着动），再按一下移回原处。", null, new ConfigurationManagerAttributes { IsAdvanced = true }));
         On = Config.Bind(Advanced, "调试：不戴 ENVG-B 也开启", false,
             new ConfigDescription("测试用：打开后，不戴 ENVG-B 也在全屏叠加热像。正常使用不用打开：戴上 ENVG-B 并放下就会工作。", null, new ConfigurationManagerAttributes { IsAdvanced = true }));
         Show = Config.Bind(Section, "显示内容", ShowOutline,
@@ -169,8 +172,22 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         Log.LogInfo(Name + " " + Version + " loaded");
     }
 
+    private bool _lensViewHooked;   // TEMPORARY
     private void Update()
     {
+        // TEMPORARY: the camera moved to the thermal lens and back. Hooked on the first frame, after every plugin's own
+        // set-up, so it runs after K-3PS-C places the camera.
+        if (!_lensViewHooked)
+        {
+            _lensViewHooked = true;
+            Camera.onPreCull += EnvgProbe.LensViewPreCull;
+            Camera.onPostRender += EnvgProbe.LensViewPostRender;
+        }
+        if (LensView != null && LensView.Value.IsDown() && !Cursor.visible)
+        {
+            EnvgProbe.LensView = !EnvgProbe.LensView;
+            Log?.LogInfo("ENVG (temporary): camera " + (EnvgProbe.LensView ? "at the thermal lens" : "back at its own place"));
+        }
         // Alt + ← →: the pods (not while a menu, the inventory or the map has the cursor); with Alt held the plain arrows
         // don't switch the mode
         bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
