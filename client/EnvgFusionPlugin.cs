@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.71.2";
+    public const string Version = "0.71.3";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -615,6 +615,7 @@ internal static class EnvgFusion
             return;
         _overlayDraw.Clear();
         EnvgChain.Fill(_overlayDraw, Material, ChainInput(width, height));
+        EnvgAlignProbe.Append(_overlayDraw, Depth);   // TEMPORARY
     }
 
     private static void Blur(CommandBuffer cb, RenderTexture from, RenderTexture to, float step, int width, int height, RenderTexture? across = null)
@@ -1284,6 +1285,13 @@ internal static class EnvgFusion
             Shader.SetGlobalMatrix(RpPrevWorldToCamId, _hasPrevCamera ? _prevWorldToCam : worldToCam);
             Shader.SetGlobalVector(RpTanId, new Vector4(_tan.x, _tan.y, _hasPrevCamera ? _prevTan.x : _tan.x, _hasPrevCamera ? _prevTan.y : _tan.y));
             Shader.SetGlobalVector(RpOnId, new Vector4(1f, 0f, 0f, 0f));
+            // TEMPORARY: the alignment probe notes what the following uses this frame
+            {
+                Vector4 cropNow = _crop.z > 0f ? _crop : new Vector4(0f, 0f, 1f, 1f), cropThen = _cropPrev.z > 0f ? _cropPrev : new Vector4(0f, 0f, 1f, 1f);
+                Vector2 jit = new Vector2(drawn.m02 - unjittered.m02, drawn.m12 - unjittered.m12) * -0.5f;
+                EnvgAlignProbe.Note(_camToWorld, _hasPrevCamera ? _prevWorldToCam : worldToCam, _tan, _hasPrevCamera ? _prevTan : _tan, jit, cropNow, cropThen,
+                    depth.width, depth.height, main.transform.rotation);
+            }
             if (Motion != null) Shader.SetGlobalTexture(RpMotionId, Motion);
             if (BodyMask != null) Shader.SetGlobalTexture(RpBodyId, BodyMask);
             _prevWorldToCam = worldToCam;
