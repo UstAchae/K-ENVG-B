@@ -24,13 +24,13 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.70.0";
+    public const string Version = "0.70.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
     internal static ManualLogSource? Log;
     internal static ConfigEntry<bool>? On, WhitePhosphor, Symbology;
-    internal static ConfigEntry<float>? GrassAmount, ThermalField, Latency, MinSpread, GroundPatches, BodyHeat, ShapeNeedsHeat, Washout, Temporal, LineWidth, Brightness, Amount, TubeBrightness, Softness, Glow, Smoothing, LensOffset, AirTemperature, LightHeating, SkyCooling, I2Noise, HeatEdges, GeometryEdges, ResidualHeat, Declutter, LocalContrast;
+    internal static ConfigEntry<float>? GrassAmount, ThermalField, Latency, MinSpread, GroundPatches, BodyHeat, ShapeNeedsHeat, Washout, Temporal, LineWidth, Brightness, Amount, TubeBrightness, Softness, Glow, Smoothing, AirTemperature, LightHeating, SkyCooling, I2Noise, HeatEdges, GeometryEdges, ResidualHeat, Declutter, LocalContrast;
     internal static ConfigEntry<float>? SensorResolution;
     internal static ConfigEntry<int>? RenderScale;
     internal static ConfigEntry<string>? Show, HeatSource;
@@ -104,8 +104,6 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("按传感器分辨率的几倍处理。1（默认）像真传感器，细碎的叶子平均成一团，线少而稳；2 细节多、线碎。", new AcceptableValueRange<int>(1, 2), advanced));
         Smoothing = Config.Bind(Advanced, "镜头模糊（像素）", 1f,
             new ConfigDescription("热像镜头的衍射模糊。越大只剩大的温差轮廓。", new AcceptableValueRange<float>(0f, 6f), advanced));
-        LensOffset = Config.Bind(Advanced, "热像镜头偏移（厘米）", 2.8f,
-            new ConfigDescription("热像镜头在眼睛上方多远（近处轮廓会错开）。", new AcceptableValueRange<float>(0f, 10f), advanced));
         AirTemperature = Config.Bind(Advanced, "气温（°C）", 15f,
             new ConfigDescription("热像的基准温度。", new AcceptableValueRange<float>(-30f, 45f), advanced));
         LightHeating = Config.Bind(Advanced, "光照升温（°C）", 15f,
@@ -425,8 +423,9 @@ internal static class EnvgFusion
         // (over the screen: at its centre, faded as the right pod swings up)
         float shown = EnvgPods.RightShown;
         Material.SetVector(FieldAtId, shown < 1f ? new Vector4(0.5f, 0.5f, shown, 1f) : Vector4.zero);
-        float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
-        Material.SetVector(ParallaxId, new Vector4(lens, 0.5f / Mathf.Max(_tan.y, 1e-4f), 0f, 0f));
+        // (no shift for the lens's place: the thermal picture lies exactly over the tube's; a shift by a fixed offset
+        // doubled near things, the gun, where the per-pixel distance was guessed wrong)
+        Material.SetVector(ParallaxId, Vector4.zero);
     }
 
     // The thermal channel's latency: the lines, their glow and the heat shown from a few frames back (as many as the
@@ -753,10 +752,8 @@ internal static class EnvgFusion
         // faded in as the device settles, and out as the right pod (with the thermal module) swings up
         float settled = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.85f, 1f, EyepieceLink.Deployed)) * EnvgPods.RightShown;
         Material.SetVector(FieldAtId, new Vector4(at.x, at.y, settled, 1f));
-        // the real device lays the thermal picture into the right eye only, whose tube sits right of the thermal
-        // lens (ENVG-B: lens x 0.0023, right eyepiece x 0.0308 in the model): so against that eye the lens is up and left
-        float lens = (EnvgFusionPlugin.LensOffset?.Value ?? 2.8f) * 0.01f;
-        Material.SetVector(ParallaxId, new Vector4(lens, 0.5f / Mathf.Max(_tan.y, 1e-4f), LensLeftOfRightEye, 0.5f / Mathf.Max(_tan.x, 1e-4f)));
+        // (no shift for the lens's place, as on the screen)
+        Material.SetVector(ParallaxId, Vector4.zero);
         int pass = show == EnvgFusionPlugin.ShowFusion || show == EnvgFusionPlugin.ShowBlackHot ? 21 : 3;
         Material.SetVector(FusionId, new Vector4(show == EnvgFusionPlugin.ShowBlackHot ? -1f : 1f, 0.85f, 0f, 0f));
         Material.SetVector(ScreenTexelId, new Vector4(1f / Mathf.Max(dest.width, 1) / _crop.z, 1f / Mathf.Max(dest.height, 1) / _crop.w, EnvgFusionPlugin.LineWidth?.Value ?? 1.5f, 0f));
@@ -808,7 +805,6 @@ internal static class EnvgFusion
 
 
 
-    private const float LensLeftOfRightEye = -0.0285f;
     private static bool _loggedFuse;
 
     internal static bool TubesWanted => Active && EnvgFusionPlugin.WhitePhosphor?.Value == true;
