@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.70.1";
+    public const string Version = "0.71.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -135,6 +135,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         I2Noise = Config.Bind(Advanced, "夜视噪点", 0f,
             new ConfigDescription("白磷夜视的散粒噪声。0 是没有。", new AcceptableValueRange<float>(0f, 3f), advanced));
         Camera.onPreRender += EnvgFusion.OnPreRender;
+        Camera.onPreCull += EnvgFusion.HideGunPreCull;
         var harmony = new Harmony(Guid);
         MethodInfo? final = AccessTools.Method(typeof(SSAAImpl), "OnRenderImage");
         if (final != null)
@@ -1052,6 +1053,8 @@ internal static class EnvgFusion
                     _shader = shader;
                 else if (shader.name == "Justachae/ENVG/WhitePhosphor")
                     _i2Shader = shader;
+                else if (shader.name == "Justachae/ENVG/GunMotion" && shader.isSupported)
+                    _gunMotionMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
                 else if (shader.name == "Justachae/ENVG/BodyMask" && shader.isSupported)
                     _bodyMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
             }
@@ -1084,6 +1087,16 @@ internal static class EnvgFusion
 
     private static void Release()
     {
+        RestoreGun();
+        if (_gunCamera != null)
+        {
+            if (_gunBack != null) _gunCamera.RemoveCommandBuffer(CameraEvent.AfterGBuffer, _gunBack);
+            if (_gunMotion != null) _gunCamera.RemoveCommandBuffer(CameraEvent.BeforeImageEffectsOpaque, _gunMotion);
+        }
+        _gunBack?.Release();
+        _gunMotion?.Release();
+        _gunBack = _gunMotion = null;
+        _gunCamera = null;
         if (_mainCopy != null && _mainCopyCamera != null)
             _mainCopyCamera.RemoveCommandBuffer(CameraEvent.BeforeForwardAlpha, _mainCopy);
         if (_motionCopy != null && _mainCopyCamera != null)
@@ -1180,7 +1193,24 @@ internal static class EnvgFusion
     // Right before the main camera renders, when its view for the frame is final (later than its pre-cull, where the
     // game or other mods may still move it), ours renders the thermal picture with that very view. The main camera's
     // target and the active texture are put back after (the game's SSAA has already set its low-resolution target).
+    // (the gun, if it was left out of this camera's drawing, is drawn back whatever happens below)
     internal static void OnPreRender(Camera camera)
+    {
+        bool gunOut = _gunHidden.Count > 0 && camera == _gunCamera;
+        if (gunOut)
+            BeginGunBack(camera);
+        try
+        {
+            OnPreRenderMain(camera);
+        }
+        finally
+        {
+            if (gunOut)
+                EndGunBack(camera);
+        }
+    }
+
+    private static void OnPreRenderMain(Camera camera)
     {
         if (!Active && _mainCopy != null && camera == _mainCopyCamera)
             _mainCopy.Clear();
@@ -1496,6 +1526,172 @@ internal static class EnvgFusion
 
     // The main camera's deferred buffers, lit picture and depth, copied (at the thermal processing's size) once its
     // opaque scene is drawn and before the transparent things.
+    // ---- the gun left out of the frame's data: the thermal picture goes on over it, as if it were not there ----
+    // The gun in hand is near and covers much of the view (a scope at the eye most of it); the scene behind it is in no
+    // buffer once the gun is drawn. So the gun's solid parts are left out of the main camera's own drawing (hidden
+    // through its culling), the frame's G-buffer and depth copied right after the G-buffer (the scene behind the gun),
+    // and the gun drawn back into the G-buffer at once, by its own materials, before the lighting: the frame comes out
+    // as the game draws it (checked offline: the same to the last bit). Its motion, which the camera's own motion pass
+    // no longer draws, is drawn back too (from each part's place last frame). Only parts whose every material is
+    // opaque and drawn in the G-buffer are left out; glass, scopes' lenses and anything else stay as the game has them.
+    private static readonly int CameraDepthId = Shader.PropertyToID("_CameraDepthTexture");
+    private static readonly int GunNowVPId = Shader.PropertyToID("_EnvgNowVP"), GunPrevVPId = Shader.PropertyToID("_EnvgPrevVP"), GunPrevMId = Shader.PropertyToID("_EnvgPrevM");
+    private static Material? _gunMotionMaterial;
+    private static GameObject? _gunNow;
+    private static readonly List<Renderer> _gunParts = new List<Renderer>();      // the gun in hand's parts that may be left out
+    private static readonly List<Renderer> _gunHidden = new List<Renderer>();     // left out of this frame's culling
+    private static readonly List<Renderer> _gunOut = new List<Renderer>();        // to draw back this frame
+    private static readonly List<Material> _gunMaterials = new List<Material>();
+    private static readonly Dictionary<Material, int> _deferredPass = new Dictionary<Material, int>();
+    private static readonly Dictionary<Renderer, Matrix4x4> _gunPrevM = new Dictionary<Renderer, Matrix4x4>();
+    private static Matrix4x4 _gunPrevVP;
+    private static bool _gunHasPrevVP, _gunCopying, _loggedGunBack;
+    private static Camera? _gunCamera;
+    private static CommandBuffer? _gunBack, _gunMotion;
+    private static readonly RenderTargetIdentifier[] _gbufferHdr = { BuiltinRenderTextureType.GBuffer0, BuiltinRenderTextureType.GBuffer1, BuiltinRenderTextureType.GBuffer2, BuiltinRenderTextureType.CameraTarget };
+    private static readonly RenderTargetIdentifier[] _gbufferLdr = { BuiltinRenderTextureType.GBuffer0, BuiltinRenderTextureType.GBuffer1, BuiltinRenderTextureType.GBuffer2, BuiltinRenderTextureType.GBuffer3 };
+
+    private static int DeferredPass(Material m)
+    {
+        if (!_deferredPass.TryGetValue(m, out int pass))
+        {
+            pass = m.FindPass("DEFERRED");
+            _deferredPass[m] = pass;
+        }
+        return pass;
+    }
+
+    // the gun in hand's parts, looked at again only when the gun changes
+    private static void GunParts()
+    {
+        GameObject? gun = null;
+        try { gun = Wearer?.HandsController?.ControllerGameObject; } catch (System.Exception) { }
+        if (gun == _gunNow)
+            return;
+        _gunNow = gun;
+        _gunParts.Clear();
+        _gunPrevM.Clear();
+        if (gun == null)
+            return;
+        int skipped = 0;
+        foreach (Renderer r in gun.GetComponentsInChildren<Renderer>(true))
+        {
+            if (!(r is MeshRenderer))
+            {
+                skipped++;
+                continue;
+            }
+            r.GetSharedMaterials(_gunMaterials);
+            bool solid = _gunMaterials.Count > 0;
+            foreach (Material m in _gunMaterials)
+                if (m == null || m.renderQueue > 2500 || DeferredPass(m) < 0)
+                    solid = false;
+            if (solid)
+                _gunParts.Add(r);
+            else
+                skipped++;
+        }
+        _gunMaterials.Clear();
+        EnvgFusionPlugin.Log?.LogInfo("ENVG: the gun " + gun.name + ": " + _gunParts.Count + " solid parts left out of the frame's data and drawn back, " + skipped + " others left as they are");
+    }
+
+    // before the main camera culls: the gun's solid parts left out (when the thermal picture is being made)
+    internal static void HideGunPreCull(Camera camera)
+    {
+        if (camera == null || camera != _main)
+            return;
+        RestoreGun();   // (left from a frame that never drew)
+        if (!Active || Material == null || _gunMotionMaterial == null || EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || EnvgPods.RightShown <= 0f)
+        {
+            _gunBack?.Clear();
+            _gunMotion?.Clear();
+            return;
+        }
+        GunParts();
+        foreach (Renderer r in _gunParts)
+            if (r != null && r.enabled && !r.forceRenderingOff && r.gameObject.activeInHierarchy)
+            {
+                r.forceRenderingOff = true;
+                _gunHidden.Add(r);
+            }
+        _gunCamera = camera;
+    }
+
+    private static void RestoreGun()
+    {
+        foreach (Renderer r in _gunHidden)
+            if (r != null)
+                r.forceRenderingOff = false;
+        _gunHidden.Clear();
+    }
+
+    // after the culling: the parts back on (for anything else that draws them), and the buffers begun
+    private static void BeginGunBack(Camera camera)
+    {
+        _gunOut.Clear();
+        _gunOut.AddRange(_gunHidden);
+        RestoreGun();
+        if (_gunBack == null)
+        {
+            _gunBack = new CommandBuffer { name = "Justachae ENVG scene behind the gun, and the gun drawn back" };
+            _gunMotion = new CommandBuffer { name = "Justachae ENVG the gun's motion drawn back" };
+            camera.AddCommandBuffer(CameraEvent.AfterGBuffer, _gunBack);
+            camera.AddCommandBuffer(CameraEvent.BeforeImageEffectsOpaque, _gunMotion);
+        }
+        _gunBack.Clear();
+        _gunMotion!.Clear();
+        _gunCopying = true;
+    }
+
+    // the gun drawn back into the G-buffer, and its motion
+    private static void EndGunBack(Camera camera)
+    {
+        _gunCopying = false;
+        CommandBuffer back = _gunBack!, motion = _gunMotion!;
+        back.SetRenderTarget(camera.allowHDR ? _gbufferHdr : _gbufferLdr, BuiltinRenderTextureType.CameraTarget);
+        int drawn = 0;
+        foreach (Renderer r in _gunOut)
+        {
+            if (r == null)
+                continue;
+            r.GetSharedMaterials(_gunMaterials);
+            for (int sub = 0; sub < _gunMaterials.Count; sub++)
+            {
+                Material m = _gunMaterials[sub];
+                int pass = m != null ? DeferredPass(m) : -1;
+                if (pass < 0)
+                    continue;
+                back.DrawRenderer(r, m, sub, pass);
+                drawn++;
+            }
+        }
+        Matrix4x4 nowVP = camera.nonJitteredProjectionMatrix * camera.worldToCameraMatrix;
+        motion.SetRenderTarget(BuiltinRenderTextureType.MotionVectors, BuiltinRenderTextureType.CameraTarget);
+        motion.SetGlobalMatrix(GunNowVPId, nowVP);
+        motion.SetGlobalMatrix(GunPrevVPId, _gunHasPrevVP ? _gunPrevVP : nowVP);
+        foreach (Renderer r in _gunOut)
+        {
+            if (r == null)
+                continue;
+            Matrix4x4 now = r.localToWorldMatrix;
+            motion.SetGlobalMatrix(GunPrevMId, _gunPrevM.TryGetValue(r, out Matrix4x4 then) ? then : now);
+            _gunPrevM[r] = now;
+            r.GetSharedMaterials(_gunMaterials);
+            for (int sub = 0; sub < _gunMaterials.Count; sub++)
+                motion.DrawRenderer(r, _gunMotionMaterial!, sub, 0);
+        }
+        _gunMaterials.Clear();
+        _gunPrevVP = nowVP;
+        _gunHasPrevVP = true;
+        if (!_loggedGunBack)
+        {
+            _loggedGunBack = true;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG: the gun left out of " + camera.name + "'s data and drawn back: " + _gunOut.Count + " parts, " + drawn + " draws into the G-buffer ("
+                + (camera.allowHDR ? "HDR" : "LDR") + ", " + camera.actualRenderingPath + "), its motion drawn back; the thermal picture goes on over it");
+        }
+        _gunOut.Clear();
+    }
+
     private static void CopyMain(Camera main, RenderTexture picture, RenderTexture normals, RenderTexture depth, RenderTexture albedo, RenderTexture specular, Vector2 jitter)
     {
         if (_mainCopy == null || _mainCopyCamera != main)
@@ -1510,11 +1706,28 @@ internal static class EnvgFusion
         _mainCopy.SetGlobalVector(JitterId, new Vector4(jitter.x, jitter.y, 0f, 0f));
         _mainCopy.SetGlobalVector(FootprintId, new Vector4(_crop.z / normals.width, _crop.w / normals.height, 0f, 0f));
         _mainCopy.Blit(BuiltinRenderTextureType.CameraTarget, picture, Material, 25);
-        _mainCopy.Blit(BuiltinRenderTextureType.GBuffer2, normals, Material, 25);
-        _mainCopy.Blit(BuiltinRenderTextureType.GBuffer0, albedo, Material, 25);
-        _mainCopy.Blit(BuiltinRenderTextureType.GBuffer1, specular, Material, 25);
-        _mainCopy.Blit(normals, depth, Material, 12);
-        DrawBodies(_mainCopy);
+        // With the gun left out of the camera's drawing, its G-buffer, depth and the people are copied right after the
+        // G-buffer, before the gun is drawn back (the scene behind the gun is there then): the depth from the depth
+        // buffer itself (the camera's depth texture is made later). Otherwise here, with the lit picture.
+        CommandBuffer early = _gunCopying && _gunBack != null ? _gunBack : _mainCopy;
+        if (early != _mainCopy)
+        {
+            early.SetGlobalVector(JitterId, new Vector4(jitter.x, jitter.y, 0f, 0f));
+            early.SetGlobalVector(FootprintId, new Vector4(_crop.z / normals.width, _crop.w / normals.height, 0f, 0f));
+        }
+        early.Blit(BuiltinRenderTextureType.GBuffer2, normals, Material, 25);
+        early.Blit(BuiltinRenderTextureType.GBuffer0, albedo, Material, 25);
+        early.Blit(BuiltinRenderTextureType.GBuffer1, specular, Material, 25);
+        if (early != _mainCopy)
+        {
+            early.SetGlobalTexture(CameraDepthId, BuiltinRenderTextureType.ResolvedDepth);
+            early.Blit(normals, depth, Material, 12);
+            early.SetGlobalTexture(CameraDepthId, BuiltinRenderTextureType.Depth);
+        }
+        else
+            early.Blit(normals, depth, Material, 12);
+        DrawBodies(early);
+        early.SetGlobalVector(JitterId, Vector4.zero);
         _mainCopy.SetGlobalVector(JitterId, Vector4.zero);
 
         if ((main.depthTextureMode & DepthTextureMode.MotionVectors) == 0)
