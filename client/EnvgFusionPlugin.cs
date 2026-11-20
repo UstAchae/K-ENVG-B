@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.72.1";
+    public const string Version = "0.72.2";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -607,7 +607,7 @@ internal static class EnvgFusion
         return t;
     }
 
-    private static readonly RenderTexture?[] _probeSteps = new RenderTexture?[6];   // TEMPORARY
+    private static readonly RenderTexture?[] _probeSteps = new RenderTexture?[9];   // TEMPORARY
     private static void FillOverlay(int width, int height)
     {
         if (_overlayDraw == null || Material == null || Picture == null || Normals == null || Depth == null || Albedo == null || Specular == null || Heat2x == null || Seams == null || GeoSource == null || GeoAcross == null || GeoNear == null || GeoFar == null
@@ -617,7 +617,8 @@ internal static class EnvgFusion
         _overlayDraw.Clear();
         EnvgChain.Fill(_overlayDraw, Material, ChainInput(width, height));
         // TEMPORARY: the chain probe's steps
-        _probeSteps[0] = Depth; _probeSteps[1] = Picture; _probeSteps[2] = Heat2x; _probeSteps[3] = HistoryB; _probeSteps[4] = Edges; _probeSteps[5] = Ridge;
+        _probeSteps[0] = Depth; _probeSteps[1] = Heat2x; _probeSteps[2] = HistoryB; _probeSteps[3] = AlbedoSoft; _probeSteps[4] = NormalsSoft; _probeSteps[5] = GrassMask;
+        _probeSteps[6] = EnvgChain.HeatCountNow; _probeSteps[7] = Edges; _probeSteps[8] = Ridge;
         EnvgAlignProbe.Append(_overlayDraw, _probeSteps);
     }
 
@@ -1056,6 +1057,8 @@ internal static class EnvgFusion
                     _shader = shader;
                 else if (shader.name == "Justachae/ENVG/WhitePhosphor")
                     _i2Shader = shader;
+                else if (shader.name == "Justachae/ENVG/LensMask" && shader.isSupported)
+                    _lensMaskMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
                 else if (shader.name == "Justachae/ENVG/BodyMask" && shader.isSupported)
                     _bodyMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
             }
@@ -1507,6 +1510,44 @@ internal static class EnvgFusion
 
     // The main camera's deferred buffers, lit picture and depth, copied (at the thermal processing's size) once its
     // opaque scene is drawn and before the transparent things.
+    // A magnified scope's lens (the game's own renderer of the scope's picture), as the eye sees it over the frame's
+    // depth, into a mask at the frame's size: the thermal picture is left out there (see the shader's scopeLens).
+    private static Material? _lensMaskMaterial;
+    private static RenderTexture? _lensMask;
+    private static readonly int LensMaskId = Shader.PropertyToID("_EnvgLensMask"), LensMaskOnId = Shader.PropertyToID("_EnvgLensMaskOn");
+    private static bool _loggedLensMask;
+    private static void DrawScopeLens(CommandBuffer cb, Camera main, Vector2 jitter)
+    {
+        Renderer? lens = null;
+        try { lens = EFT.CameraControl.CameraManager.Instance?.OpticCameraManager?.CurrentOpticSight?.LensRenderer; } catch (System.Exception) { }
+        if (lens == null || _lensMaskMaterial == null || !lens.gameObject.activeInHierarchy)
+        {
+            Shader.SetGlobalVector(LensMaskOnId, Vector4.zero);
+            return;
+        }
+        int w = Mathf.Max(main.pixelWidth, 1), h = Mathf.Max(main.pixelHeight, 1);
+        if (_lensMask == null || _lensMask.width != w || _lensMask.height != h)
+        {
+            if (_lensMask != null)
+            {
+                _lensMask.Release();
+                Object.Destroy(_lensMask);
+            }
+            _lensMask = new RenderTexture(w, h, 0, RenderTextureFormat.R8) { name = "Justachae ENVG scope lens", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            _lensMask.Create();
+        }
+        cb.SetRenderTarget(_lensMask, BuiltinRenderTextureType.CameraTarget);
+        cb.ClearRenderTarget(false, true, Color.clear);
+        cb.DrawRenderer(lens, _lensMaskMaterial, 0, 0);
+        cb.SetGlobalTexture(LensMaskId, _lensMask);
+        Shader.SetGlobalVector(LensMaskOnId, new Vector4(1f, jitter.x, jitter.y, 0f));
+        if (!_loggedLensMask)
+        {
+            _loggedLensMask = true;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG: a scope's lens (" + lens.name + ") left out of the thermal picture, its housing kept");
+        }
+    }
+
     private static void CopyMain(Camera main, RenderTexture picture, RenderTexture normals, RenderTexture depth, RenderTexture albedo, RenderTexture specular, Vector2 jitter)
     {
         if (_mainCopy == null || _mainCopyCamera != main)
@@ -1526,6 +1567,7 @@ internal static class EnvgFusion
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer1, specular, Material, 25);
         _mainCopy.Blit(normals, depth, Material, 12);
         DrawBodies(_mainCopy);
+        DrawScopeLens(_mainCopy, main, jitter);
         _mainCopy.SetGlobalVector(JitterId, Vector4.zero);
 
         if ((main.depthTextureMode & DepthTextureMode.MotionVectors) == 0)

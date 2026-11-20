@@ -41,12 +41,12 @@ public static class EnvgTaaTest
 
     static bool PicNoise = true, AlbNoise = true;
     static int Frames = 300;
-    static bool Step = true;
+    static bool Step = true, NormNoise = false;
     public static void Run()
     {
-        foreach (var c in new[] { (true, true), (false, false) })
+        foreach (var c in new[] { (false, false), (false, true) })
         {
-            Step = c.Item1; PicNoise = AlbNoise = true;
+            Step = c.Item1; NormNoise = c.Item2; PicNoise = AlbNoise = true;
             RunOnce();
         }
     }
@@ -127,6 +127,17 @@ public static class EnvgTaaTest
             }
             if (t.Albedo != null) { t.Albedo.Release(); Object.DestroyImmediate(t.Albedo); }
             t.Albedo = Upload(alb, RenderTextureFormat.ARGB32);
+            if (NormNoise)
+            {
+                var nor = new Color[W * H];
+                for (int i = 0; i < nor.Length; i++)
+                {
+                    float nx = (float)(rnd.NextDouble() - 0.5) * 0.03f, ny = (float)(rnd.NextDouble() - 0.5) * 0.03f;
+                    nor[i] = new Color(0.5f + nx, 0.5f + ny, 1f, 1f);
+                }
+                if (t.Normals != null) { t.Normals.Release(); Object.DestroyImmediate(t.Normals); }
+                t.Normals = Upload(nor, RenderTextureFormat.ARGB32);
+            }
             var cb = new CommandBuffer();
             EnvgChain.Fill(cb, m, t);
             Graphics.ExecuteCommandBuffer(cb);
@@ -146,7 +157,7 @@ public static class EnvgTaaTest
             }
             last = now;
         }
-        var said = new System.Text.StringBuilder("ENVG_TAA_TEST (step " + Step + ") frame-to-frame change over " + counted + " frames:");
+        var said = new System.Text.StringBuilder("ENVG_TAA_TEST (step " + Step + ", normals noise " + NormNoise + ") frame-to-frame change over " + counted + " frames:");
         for (int s = 0; s < 5; s++)
             said.Append(" " + names[s] + " " + (change[s] / System.Math.Max(level[s], 1e-9) * 100.0).ToString("F2") + "%");
         Debug.Log(said.ToString());

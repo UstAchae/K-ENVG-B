@@ -104,6 +104,7 @@ internal static class EnvgChain
     private static readonly int DepthPrevId = Shader.PropertyToID("_EnvgDepthPrev");
     // how many frames the heat's history holds, per pixel (pass 38), ping-pong with the history
     private static RenderTexture? _countA, _countB;
+    internal static RenderTexture? HeatCountNow;   // TEMPORARY (the probe)
     private static readonly int HeatCountId = Shader.PropertyToID("_EnvgHeatCount"), HistSizeId = Shader.PropertyToID("_EnvgHistSize");
     private static readonly int HeatHistoryId = Shader.PropertyToID("_EnvgHeatHistory");
     private static readonly int HeatTemporalId = Shader.PropertyToID("_EnvgHeatTemporal");
@@ -325,6 +326,7 @@ internal static class EnvgChain
             cb.SetGlobalVector(HeatTemporalId, new Vector4(_heatHistoryValid ? t.HeatTemporal : 0f, _heatHistoryValid && depthPrevOk ? 1f : 0f, 0f, 0f));
             cb.Blit(t.HistoryB, next, m, 36);
             cb.Blit(t.HistoryB, countNow, m, 38);
+            HeatCountNow = countNow;
             cb.Blit(next, t.HistoryB);
             _heatHistoryValid = true;
         }

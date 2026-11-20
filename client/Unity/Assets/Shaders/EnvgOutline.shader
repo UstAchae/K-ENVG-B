@@ -321,9 +321,19 @@ Shader "Justachae/ENVG/Outline"
     // The thermal lens sits about 13 cm in front of the eye: nothing nearer can be in its view (the goggle's own tubes
     // and eyecups, which the main camera may see for a frame). Those pixels, and a few around them (their edge),
     // show no thermal picture at all. tuv: the thermal textures' uv.
+    // a magnified scope's lens (its picture, the reticle's area): no thermal picture there; screen uv
+    sampler2D _EnvgLensMask;
+    float4 _EnvgLensMaskOn;   // x: 1 when drawn this frame, yz: this frame's sub-pixel offset (uv)
+    float scopeLens(float2 uv)
+    {
+        if (_EnvgLensMaskOn.x < 0.5)
+            return 0.0;
+        return saturate(tex2D(_EnvgLensMask, uv + _EnvgLensMaskOn.yz).r);
+    }
+
     float beyondLens(float2 tuv)
     {
-        const float lensReach = 0.15;   // the lens's distance ahead of the eye and a margin (m)
+        const float lensReach = 0.04;   // the goggle's own eyecups at the eye (m); a scope's housing, farther, keeps it
         float2 t = _EnvgScreenTexel.xy * 3.0;
         float d = tex2Dlod(_EnvgDepth, float4(tuv, 0, 0)).r;
         d = min(d, tex2Dlod(_EnvgDepth, float4(tuv + float2(t.x, 0), 0, 0)).r);
@@ -374,7 +384,7 @@ Shader "Justachae/ENVG/Outline"
         if (field <= 0.0)
             return float4(0, 0, 0, 1);
         float2 tuv = thermalUv(i.uv);
-        field *= beyondLens(tuv);
+        field *= beyondLens(tuv) * (1.0 - scopeLens(i.uv));
         if (field <= 0.0)
             return float4(0, 0, 0, 1);
         float core = edgeAt(tuv);
@@ -1146,7 +1156,7 @@ Shader "Justachae/ENVG/Outline"
                 if (field <= 0.0)
                     return float4(0, 0, 0, 0);
                 float2 tuv = thermalUv(i.uv);
-                field *= beyondLens(tuv);
+                field *= beyondLens(tuv) * (1.0 - scopeLens(i.uv));
                 // the picture in two layers, as a thermal core's detail enhancement makes it: the base (the heat averaged
                 // over one surface only, so no halo crosses an edge), equalized over the display; the detail (the heat
                 // less its base: a face, the gear, the bark), added on top

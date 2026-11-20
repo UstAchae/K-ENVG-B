@@ -22,8 +22,9 @@ internal static class EnvgAlignProbe
         public float TurnDeg, MoveMm;
     }
 
-    private static readonly string[] Names = { "depth", "picture (input)", "heat", "heat followed", "edge response", "lines" };
-    private const int Stages = 6;
+    private static readonly string[] Names = { "depth", "heat", "heat followed", "albedo soft", "normals soft", "grass mask", "frames held", "edge response", "lines" };
+    private const int Stages = 9;
+    private const int CountStage = 6;
     private static Frame _now, _measured;
     private static Vector2 _lastJitter;
     private static Quaternion _lastTurn;
@@ -156,7 +157,14 @@ internal static class EnvgAlignProbe
                     used++;
                     for (int s = 1; s < Stages; s++)
                     {
-                        float a = now[s][y * w + x], b = Sample(then[s], w, h, p.x, p.y);
+                        float a = now[s][y * w + x];
+                        if (s == CountStage)
+                        {
+                            change[s] += a;               // the mean of the frames held
+                            level[s] += a >= 31.5f ? 1 : 0;   // the share settled all the way
+                            continue;
+                        }
+                        float b = Sample(then[s], w, h, p.x, p.y);
                         change[s] += Mathf.Abs(a - b);
                         level[s] += 0.5f * (Mathf.Abs(a) + Mathf.Abs(b));
                     }
@@ -187,7 +195,14 @@ internal static class EnvgAlignProbe
             var said = new System.Text.StringBuilder("ENVG chain probe (temporary): turn " + f.TurnDeg.ToString("F3") + " deg, move " + f.MoveMm.ToString("F1")
                 + " mm; frame-to-frame change where the scene stays (share of the level):");
             for (int s = 1; s < Stages; s++)
+            {
+                if (s == CountStage)
+                {
+                    said.Append(" | frames held: mean " + (change[s] / used).ToString("F1") + ", all 32 at " + (level[s] / used * 100.0).ToString("F0") + "% |");
+                    continue;
+                }
                 said.Append(" " + Names[s] + " " + (change[s] / System.Math.Max(level[s], 1e-9) * 100.0).ToString("F1") + "%");
+            }
             said.Append("; following off by up " + ((by - Offsets / 2) * 0.25f).ToString("+0.00;-0.00") + " right " + ((bx - Offsets / 2) * 0.25f).ToString("+0.00;-0.00")
                 + " px (" + edgeUsed + " edges); " + used + " samples of " + w + "x" + h + "; jitter " + f.Jitter.x.ToString("F5") + "," + f.Jitter.y.ToString("F5")
                 + " before " + f.PrevJitter.x.ToString("F5") + "," + f.PrevJitter.y.ToString("F5"));
