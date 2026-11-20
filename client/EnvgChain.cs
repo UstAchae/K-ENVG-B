@@ -92,11 +92,17 @@ internal static class EnvgChain
     {
         _edgeHistoryValid = false;
         _heatHistoryValid = false;
+        _depthPrevValid = false;
     }
 
     // the heat picture's own history (pass 36), ping-ponged
     private static RenderTexture? _heatHistA, _heatHistB;
     private static bool _heatFlip, _heatHistoryValid;
+    // last frame's depth, for telling where last frame saw the same surface (the heat's history kept whole there)
+    private static RenderTexture? _depthPrev;
+    private static bool _depthPrevValid;
+    private static readonly int DepthPrevId = Shader.PropertyToID("_EnvgDepthPrev");
+    private const float SettledShare = 0.9f;   // the history's share on the same surface (as the game's TAA)
     private static readonly int HeatHistoryId = Shader.PropertyToID("_EnvgHeatHistory");
     private static readonly int HeatTemporalId = Shader.PropertyToID("_EnvgHeatTemporal");
 
@@ -306,7 +312,10 @@ internal static class EnvgChain
             _heatFlip = !_heatFlip;
             cb.SetGlobalTexture(MotionId, t.Motion);
             cb.SetGlobalTexture(HeatHistoryId, previous);
-            cb.SetGlobalVector(HeatTemporalId, new Vector4(_heatHistoryValid ? t.HeatTemporal : 0f, 0f, 0f, 0f));
+            bool depthPrevOk = _depthPrevValid && _depthPrev != null && t.Depth != null && _depthPrev.width == t.Depth.width && _depthPrev.height == t.Depth.height;
+            if (depthPrevOk)
+                cb.SetGlobalTexture(DepthPrevId, _depthPrev);
+            cb.SetGlobalVector(HeatTemporalId, new Vector4(_heatHistoryValid ? t.HeatTemporal : 0f, _heatHistoryValid && depthPrevOk ? SettledShare : 0f, 0f, 0f));
             cb.Blit(t.HistoryB, next, m, 36);
             cb.Blit(next, t.HistoryB);
             _heatHistoryValid = true;
@@ -386,6 +395,13 @@ internal static class EnvgChain
         cb.SetGlobalTexture(GlowId, t.Glow);
         cb.SetGlobalTexture(DensityId, t.Density);
         cb.SetGlobalVector(DeclutterId, new Vector4(t.Declutter, 0.07f, 0f, 0f));
+        // this frame's depth kept for the next (the heat's history checked against it)
+        if (t.Depth != null)
+        {
+            Ensure(ref _depthPrev, t.Depth.width, t.Depth.height, RenderTextureFormat.RGFloat, "Justachae ENVG depth, last frame");
+            cb.Blit(t.Depth, _depthPrev);
+            _depthPrevValid = true;
+        }
     }
 
     // A gaussian of the given step (sigma about two steps). A wide one is made of several narrow ones (their variances

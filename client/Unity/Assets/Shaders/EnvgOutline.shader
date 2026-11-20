@@ -192,8 +192,10 @@ Shader "Justachae/ENVG/Outline"
     float4 _EnvgRpTan;   // xy: tan of half the field of view now (x, y), zw: last frame's
     float4 _EnvgRpOn;    // x: 1 when the camera's own following is set (the preview: the game's vectors only)
     sampler2D _EnvgRpMotion, _EnvgRpBody;
-    float2 previousUv(float2 cuv)
+    // (predicted: this point's distance from last frame's camera, for the still world; 0 for people, who move)
+    float2 previousUvAt(float2 cuv, out float predicted)
     {
+        predicted = 0.0;
         float2 su = toScreen(cuv);
         float2 game = su - tex2Dlod(_EnvgRpMotion, float4(cuv, 0, 0)).xy;
         if (_EnvgRpOn.x < 0.5 || tex2Dlod(_EnvgRpBody, float4(cuv, 0, 0)).r > 0.25)
@@ -204,8 +206,14 @@ Shader "Justachae/ENVG/Outline"
         float3 before = mul(_EnvgRpPrevWorldToCam, float4(world, 1.0)).xyz;
         if (before.z > -1e-4)
             return float2(-1.0, -1.0);   // behind last frame's camera: no history
+        predicted = -before.z;
         float2 then = float2(before.x / (-before.z) / _EnvgRpTan.z, before.y / (-before.z) / _EnvgRpTan.w) * 0.5 + 0.5;
         return toChainPrev(then);
+    }
+    float2 previousUv(float2 cuv)
+    {
+        float predicted;
+        return previousUvAt(cuv, predicted);
     }
 
     // the thermal lens sits above the tubes, its axis aligned with theirs at infinity: something near is seen by it a
@@ -1607,7 +1615,10 @@ Shader "Justachae/ENVG/Outline"
             #pragma fragment fragHeatTemporal
             sampler2D _EnvgMotion;
             sampler2D _EnvgHeatHistory;   // last frame's followed heat picture
-            float4 _EnvgHeatTemporal;     // x: the share of the history
+            float4 _EnvgHeatTemporal;     // x: the share of the history held to this frame's neighbourhood; y: the share
+                                          // where last frame saw the same surface (0: no last depth)
+            sampler2D _EnvgDepthPrev;     // last frame's depth (its own crop)
+            float4 _EnvgDepthPrev_TexelSize;
             float4 fragHeatTemporal(v2f i) : SV_Target
             {
                 float2 t = _MainTex_TexelSize.xy;
@@ -1622,11 +1633,37 @@ Shader "Justachae/ENVG/Outline"
                         hi = max(hi, v);
                     }
                 }
-                float2 previous = previousUv(i.uv);
+                float predicted;
+                float2 previous = previousUvAt(i.uv, predicted);
                 if (_EnvgHeatTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
                     return c;
-                float4 h = clamp(tex2D(_EnvgHeatHistory, previous), lo, hi);
-                return lerp(c, h, _EnvgHeatTemporal.x);
+                float4 h = tex2D(_EnvgHeatHistory, previous);
+                // As the game's TAA settles its picture: the copy of a jittered frame, and the light's own dithering,
+                // change a little every frame though nothing moved; only many frames together are steady. Where last
+                // frame saw this very surface (the still world, followed exactly by the camera, and last frame's depth
+                // around that place holding this point's distance), last frame's heat is this point's own, kept whole and
+                // blended in: the picture settles to the frames' mean. Held to this frame's neighbourhood, as before,
+                // only where it is not that surface (people, something that came into view).
+                bool same = false;
+                if (predicted > 0.0 && _EnvgHeatTemporal.y > 0.0)
+                {
+                    float2 t2 = _EnvgDepthPrev_TexelSize.xy;
+                    float dlo = 1e6, dhi = 0.0;
+                    [unroll] for (int y = -1; y <= 1; y++)
+                    {
+                        [unroll] for (int x = -1; x <= 1; x++)
+                        {
+                            float dp = tex2Dlod(_EnvgDepthPrev, float4(previous + float2(x, y) * t2, 0, 0)).r;
+                            dp = dp <= 0.0 ? 1e5 : dp;
+                            dlo = min(dlo, dp);
+                            dhi = max(dhi, dp);
+                        }
+                    }
+                    same = predicted >= dlo * 0.97 && predicted <= dhi * 1.03;
+                }
+                if (same)
+                    return lerp(c, h, _EnvgHeatTemporal.y);
+                return lerp(c, clamp(h, lo, hi), _EnvgHeatTemporal.x);
             }
             ENDCG
         }
