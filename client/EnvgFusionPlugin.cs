@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.71.3";
+    public const string Version = "0.71.4";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -607,6 +607,7 @@ internal static class EnvgFusion
         return t;
     }
 
+    private static readonly RenderTexture?[] _probeSteps = new RenderTexture?[6];   // TEMPORARY
     private static void FillOverlay(int width, int height)
     {
         if (_overlayDraw == null || Material == null || Picture == null || Normals == null || Depth == null || Albedo == null || Specular == null || Heat2x == null || Seams == null || GeoSource == null || GeoAcross == null || GeoNear == null || GeoFar == null
@@ -615,7 +616,9 @@ internal static class EnvgFusion
             return;
         _overlayDraw.Clear();
         EnvgChain.Fill(_overlayDraw, Material, ChainInput(width, height));
-        EnvgAlignProbe.Append(_overlayDraw, Depth);   // TEMPORARY
+        // TEMPORARY: the chain probe's steps
+        _probeSteps[0] = Depth; _probeSteps[1] = Picture; _probeSteps[2] = Heat2x; _probeSteps[3] = HistoryB; _probeSteps[4] = Edges; _probeSteps[5] = Ridge;
+        EnvgAlignProbe.Append(_overlayDraw, _probeSteps);
     }
 
     private static void Blur(CommandBuffer cb, RenderTexture from, RenderTexture to, float step, int width, int height, RenderTexture? across = null)
@@ -1290,7 +1293,7 @@ internal static class EnvgFusion
                 Vector4 cropNow = _crop.z > 0f ? _crop : new Vector4(0f, 0f, 1f, 1f), cropThen = _cropPrev.z > 0f ? _cropPrev : new Vector4(0f, 0f, 1f, 1f);
                 Vector2 jit = new Vector2(drawn.m02 - unjittered.m02, drawn.m12 - unjittered.m12) * -0.5f;
                 EnvgAlignProbe.Note(_camToWorld, _hasPrevCamera ? _prevWorldToCam : worldToCam, _tan, _hasPrevCamera ? _prevTan : _tan, jit, cropNow, cropThen,
-                    depth.width, depth.height, main.transform.rotation);
+                    depth.width, depth.height, main.transform.rotation, main.transform.position);
             }
             if (Motion != null) Shader.SetGlobalTexture(RpMotionId, Motion);
             if (BodyMask != null) Shader.SetGlobalTexture(RpBodyId, BodyMask);
