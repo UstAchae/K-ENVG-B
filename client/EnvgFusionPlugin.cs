@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.69.1";
+    public const string Version = "0.70.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -159,8 +159,6 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         }
         EyecupSlotIcon.Patch(harmony);
         // the sights' glass: the red dots and holographic sights the game has enabled, as it announces them
-        CollimatorSight.OnCollimatorEnabled += EnvgFusion.SightEnabled;
-        CollimatorSight.OnCollimatorDisabled += EnvgFusion.SightDisabled;
         MethodInfo? nvPreCull = AccessTools.Method(typeof(BSG.CameraEffects.NightVision), "OnPreCull");
         if (nvPreCull != null)
             harmony.Patch(nvPreCull, postfix: new HarmonyMethod(typeof(EnvgFusion), nameof(EnvgFusion.AfterNightVisionPreCull)));
@@ -1060,8 +1058,6 @@ internal static class EnvgFusion
                     _i2Shader = shader;
                 else if (shader.name == "Justachae/ENVG/BodyMask" && shader.isSupported)
                     _bodyMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
-                else if (shader.name == "Justachae/ENVG/GlassMask" && shader.isSupported)
-                    _glassMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
             }
         }
         if (_shader == null || !_shader.isSupported)
@@ -1269,7 +1265,6 @@ internal static class EnvgFusion
         Ensure(ref HeatBase, fineWidth, fineHeight, 0, RenderTextureFormat.ARGBHalf, "Justachae ENVG heat base");
         Ensure(ref GrassMask, fineWidth, fineHeight, 0, RenderTextureFormat.RHalf, "Justachae ENVG grass mask");
         Ensure(ref BodyMask, fineWidth, fineHeight, 0, RenderTextureFormat.RHalf, "Justachae ENVG body heat");
-        Ensure(ref GlassChain, fineWidth, fineHeight, 0, RenderTextureFormat.RHalf, "Justachae ENVG sights' glass, thermal pixels");
         if (EdgeHistA == null || EdgeHistA.width != width * Oversample || EdgeHistA.height != height * Oversample)
             EnvgChain.ResetHistory();
         Ensure(ref EdgeHistA, width * Oversample, height * Oversample, 0, RenderTextureFormat.RHalf, "Justachae ENVG edges, followed A");
@@ -1330,167 +1325,6 @@ internal static class EnvgFusion
     // collected once and again only when one of them is gone (gear changed).
     private static Material? _bodyMaterial;
 
-    // ---- the sights' glass (long-wave infrared does not pass glass: no thermal picture through a sight's window) ----
-    private static Material? _glassMaterial;
-    private static readonly HashSet<CollimatorSight> _sights = new HashSet<CollimatorSight>();
-    internal static void SightEnabled(CollimatorSight sight) => _sights.Add(sight);
-    internal static void SightDisabled(CollimatorSight sight)
-    {
-        _sights.Remove(sight);
-        _sightGlass.Remove(sight);
-    }
-
-    // A sight's glass: the see-through parts of its own model (transparent materials: its windows, its lenses; the
-    // housing is opaque). The game's reticle plane is not it: a small quad turned to face the eye wherever it is, which
-    // seen at a slant covers only part of the window. Found once per sight, from the reticle plane up to the sight's own
-    // root (the node under the slot it is fitted in), leaving out anything fitted into slots of its own.
-    private struct GlassPart
-    {
-        public Renderer Renderer;
-        public int Sub;
-    }
-    private static readonly Dictionary<CollimatorSight, GlassPart[]> _sightGlass = new Dictionary<CollimatorSight, GlassPart[]>();
-    private static readonly List<GlassPart> _partsFound = new List<GlassPart>();
-    private static readonly HashSet<string> _loggedSights = new HashSet<string>();
-
-    private static bool IsSlot(Transform t) => t.name.StartsWith("mod_", System.StringComparison.OrdinalIgnoreCase);
-
-    private static GlassPart[] GlassOf(CollimatorSight sight)
-    {
-        if (_sightGlass.TryGetValue(sight, out GlassPart[] known) && System.Array.TrueForAll(known, p => p.Renderer != null))
-            return known;
-        Transform root = sight.transform;
-        for (int k = 0; k < 12 && root.parent != null && !IsSlot(root.parent); k++)
-            root = root.parent;
-        _partsFound.Clear();
-        var names = new System.Text.StringBuilder();
-        foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
-        {
-            if (r == sight.CollimatorMeshRenderer || r is ParticleSystemRenderer || r is LineRenderer || r is TrailRenderer)
-                continue;
-            bool inOtherSlot = false;
-            for (Transform? t = r.transform; t != null && t != root; t = t.parent)
-                if (IsSlot(t))
-                {
-                    inOtherSlot = true;
-                    break;
-                }
-            if (inOtherSlot)
-                continue;
-            Material[] materials = r.sharedMaterials;
-            for (int sub = 0; sub < materials.Length; sub++)
-            {
-                Material m = materials[sub];
-                if (m == null || m.renderQueue <= 2500)
-                    continue;
-                _partsFound.Add(new GlassPart { Renderer = r, Sub = sub });
-                if (names.Length < 400)
-                    names.Append(r.name).Append(" [").Append(m.name).Append(", ").Append(m.shader != null ? m.shader.name : "-").Append("] ");
-            }
-        }
-        GlassPart[] parts = _partsFound.ToArray();
-        _sightGlass[sight] = parts;
-        if (_loggedSights.Add(root.name))
-            EnvgFusionPlugin.Log?.LogInfo("ENVG sights' glass of " + root.name + ": " + (parts.Length > 0 ? parts.Length + " see-through parts: " + names : "none found, its reticle plane stands in for it"));
-        return parts;
-    }
-    private static RenderTexture? _glassMask;
-    private static readonly int GlassMaskId = Shader.PropertyToID("_EnvgGlassMask");
-    private static readonly int GlassOnId = Shader.PropertyToID("_EnvgGlassOn");
-    private static readonly int GlassChainId = Shader.PropertyToID("_EnvgGlassChain");
-    private static RenderTexture? GlassChain;
-    private const float SightReach = 3f;   // as the game itself: sights farther than this are not looked through
-    private static bool _loggedGlass, _loggedNoGlass;
-
-    // The glass the tubes see through, drawn into a mask at the frame's own size over the frame's depth (after its opaque
-    // scene: whatever stands in front of the glass, the sight's own frame first, is left out). The see-through parts of
-    // the red dots and holographic sights near the camera, and the lens of the scope looked through.
-    private static void DrawGlass(CommandBuffer cb, Camera main, Vector2 jitter)
-    {
-        Renderer? lens = null;
-        try
-        {
-            lens = EFT.CameraControl.CameraManager.Instance?.OpticCameraManager?.CurrentOpticSight?.LensRenderer;
-        }
-        catch (System.Exception)
-        {
-        }
-        bool any = lens != null;
-        Vector3 eye = main.transform.position;
-        foreach (CollimatorSight sight in _sights)
-            if (sight != null && sight.CollimatorMeshRenderer != null && (sight.CollimatorMeshRenderer.transform.position - eye).sqrMagnitude <= SightReach * SightReach)
-            {
-                any = true;
-                break;
-            }
-        if (!any || _glassMaterial == null)
-        {
-            if (!_loggedNoGlass && (_sights.Count > 0 || _glassMaterial == null))
-            {
-                _loggedNoGlass = true;
-                EnvgFusionPlugin.Log?.LogInfo("ENVG sights' glass: none drawn (" + _sights.Count + " sights enabled, none within " + SightReach + " m"
-                    + (_glassMaterial == null ? "; the glass shader is missing" : "") + ")");
-            }
-            Shader.SetGlobalVector(GlassOnId, Vector4.zero);
-            return;
-        }
-        int w = Mathf.Max(main.pixelWidth, 1), h = Mathf.Max(main.pixelHeight, 1);
-        if (_glassMask == null || _glassMask.width != w || _glassMask.height != h)
-        {
-            if (_glassMask != null)
-            {
-                _glassMask.Release();
-                Object.Destroy(_glassMask);
-            }
-            _glassMask = new RenderTexture(w, h, 0, RenderTextureFormat.R8) { name = "Justachae ENVG sights' glass", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
-            _glassMask.Create();
-        }
-        cb.SetRenderTarget(_glassMask, BuiltinRenderTextureType.CameraTarget);
-        cb.ClearRenderTarget(false, true, Color.clear);
-        int drawn = 0;
-        foreach (CollimatorSight sight in _sights)
-        {
-            // (as the game draws them into its own scope mask: the reticle plane's renderer is often off, drawn by the
-            // sight system itself, so neither its enabled flag nor its visibility says anything)
-            MeshRenderer? r = sight != null ? sight.CollimatorMeshRenderer : null;
-            if (r == null || (r.transform.position - eye).sqrMagnitude > SightReach * SightReach)
-                continue;
-            GlassPart[] parts = GlassOf(sight!);
-            if (parts.Length == 0)
-            {
-                cb.DrawRenderer(r, _glassMaterial, 0, 0);
-                drawn++;
-                continue;
-            }
-            foreach (GlassPart part in parts)
-            {
-                if (part.Renderer == null || !part.Renderer.gameObject.activeInHierarchy)
-                    continue;
-                cb.DrawRenderer(part.Renderer, _glassMaterial, part.Sub, 0);
-                drawn++;
-            }
-        }
-        if (lens != null)
-        {
-            cb.DrawRenderer(lens, _glassMaterial, 0, 0);
-            drawn++;
-        }
-        cb.SetGlobalTexture(GlassMaskId, _glassMask);
-        // and at the thermal picture's own pixels (the frame's sub-pixel offset taken back, as every copy), for the heat
-        if (GlassChain != null)
-        {
-            cb.Blit(_glassMask, GlassChain, Material, 25);
-            cb.SetGlobalTexture(GlassChainId, GlassChain);
-        }
-        // read where this frame's sub-pixel offset put the glass (the picture it is laid over is the settled one)
-        Shader.SetGlobalVector(GlassOnId, new Vector4(drawn > 0 ? 1f : 0f, jitter.x, jitter.y, 0f));
-        if (!_loggedGlass)
-        {
-            _loggedGlass = true;
-            EnvgFusionPlugin.Log?.LogInfo("ENVG sights' glass: " + drawn + " drawn over the frame's depth into a " + w + "x" + h + " mask (no thermal picture through it), of "
-                + _sights.Count + " sights the game has enabled" + (lens != null ? ", a scope's lens among them" : ""));
-        }
-    }
     private static readonly Dictionary<EFT.Player, Renderer[]> _bodyRenderers = new Dictionary<EFT.Player, Renderer[]>();
     private static readonly List<EFT.Player> _bodyGone = new List<EFT.Player>();
     private static readonly int BodyTempId = Shader.PropertyToID("_EnvgBodyFull");
@@ -1685,7 +1519,6 @@ internal static class EnvgFusion
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer1, specular, Material, 25);
         _mainCopy.Blit(normals, depth, Material, 12);
         DrawBodies(_mainCopy);
-        DrawGlass(_mainCopy, main, jitter);
         _mainCopy.SetGlobalVector(JitterId, Vector4.zero);
 
         if ((main.depthTextureMode & DepthTextureMode.MotionVectors) == 0)
