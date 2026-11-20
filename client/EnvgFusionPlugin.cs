@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.71.0";
+    public const string Version = "0.71.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -136,6 +136,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("白磷夜视的散粒噪声。0 是没有。", new AcceptableValueRange<float>(0f, 3f), advanced));
         Camera.onPreRender += EnvgFusion.OnPreRender;
         Camera.onPreCull += EnvgFusion.HideGunPreCull;
+        Camera.onPostRender += EnvgFusion.GunPostRender;
         var harmony = new Harmony(Guid);
         MethodInfo? final = AccessTools.Method(typeof(SSAAImpl), "OnRenderImage");
         if (final != null)
@@ -215,7 +216,11 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         EnvgFusion.Update();
     }
 
-    private void LateUpdate() => EnvgFusion.SetWhitePhosphor();
+    private void LateUpdate()
+    {
+        EnvgFusion.GunBackOnInUpdate();
+        EnvgFusion.SetWhitePhosphor();
+    }
 
     // every plugin's assembly is loaded by now: K-3PS-C's eyepieces, if it is there
     private void Start() => EyepieceLink.Bind();
@@ -1598,9 +1603,11 @@ internal static class EnvgFusion
     // before the main camera culls: the gun's solid parts left out (when the thermal picture is being made)
     internal static void HideGunPreCull(Camera camera)
     {
+        // whatever camera culls next, the gun is back on first: never left out past the camera it was left out for
+        // (a camera that never drew after its culling, a new main camera after a scene change)
+        RestoreGun();
         if (camera == null || camera != _main)
             return;
-        RestoreGun();   // (left from a frame that never drew)
         if (!Active || Material == null || _gunMotionMaterial == null || EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || EnvgPods.RightShown <= 0f)
         {
             _gunBack?.Clear();
@@ -1614,8 +1621,36 @@ internal static class EnvgFusion
                 r.forceRenderingOff = true;
                 _gunHidden.Add(r);
             }
+        if (!ReferenceEquals(_gunCamera, camera) && _gunBack != null)
+        {
+            // another main camera (the old one maybe gone): the buffers made anew on it
+            if (_gunCamera != null)
+            {
+                _gunCamera.RemoveCommandBuffer(CameraEvent.AfterGBuffer, _gunBack);
+                _gunCamera.RemoveCommandBuffer(CameraEvent.BeforeImageEffectsOpaque, _gunMotion!);
+            }
+            _gunBack.Release();
+            _gunMotion!.Release();
+            _gunBack = _gunMotion = null;
+        }
         _gunCamera = camera;
     }
+
+    // the gun back on after the camera has drawn, and in every frame's late update: nothing of it stays left out
+    internal static void GunPostRender(Camera camera) => RestoreGun();
+    internal static void GunBackOnInUpdate()
+    {
+        if (_gunHidden.Count > 0)
+        {
+            RestoreGun();
+            if (!_loggedGunStuck)
+            {
+                _loggedGunStuck = true;
+                EnvgFusionPlugin.Log?.LogWarning("ENVG: the gun was still left out at the frame's update (its camera never drew); put back on");
+            }
+        }
+    }
+    private static bool _loggedGunStuck;
 
     private static void RestoreGun()
     {
