@@ -23,9 +23,7 @@ internal static class EnvgPods
     // the nodes, looked for only when something changes: another device, something else in its eyecup slot, or a node
     // gone (the model made anew); a few frames running after such a change, as the game builds the model a frame or
     // two later. Never on a timer.
-    private static Transform? _podL, _podR, _cupL, _cupR, _lens;
-    // the device's thermal lens (an empty node in the model, +Z out; it swings with the right pod)
-    internal static Transform? ThermalLens => _lens;
+    private static Transform? _podL, _podR, _cupL, _cupR;
     private static EFT.InventoryLogic.Slot? _cupSlot;
     private static object? _cupItem;
     private static int _lookFrames;
@@ -55,7 +53,7 @@ internal static class EnvgPods
             _device = device;
             _wantLeft = _wantRight = false;
             _left = _right = 0f;
-            _podL = _podR = _cupL = _cupR = _lens = null;
+            _podL = _podR = _cupL = _cupR = null;
             _cupSlot = null;
             _cupItem = null;
             if (device is EFT.InventoryLogic.CompoundItem compound && compound.Slots != null)
@@ -78,9 +76,9 @@ internal static class EnvgPods
             _cupL = _cupR = null;
             _lookFrames = LookFor;
         }
-        if ((_podL is not null && _podL == null) || (_podR is not null && _podR == null) || (_lens is not null && _lens == null))
+        if ((_podL is not null && _podL == null) || (_podR is not null && _podR == null))
         {
-            _podL = _podR = _lens = null;
+            _podL = _podR = null;
             _lookFrames = LookFor;
         }
         bool missing = _podL == null || _podR == null || (cup != null && (_cupL == null || _cupR == null));
@@ -110,7 +108,6 @@ internal static class EnvgPods
                 case "envgb_pod_R": _podR = t; break;
                 case "envgb_eyecup_pod_L": _cupL = t; break;
                 case "envgb_eyecup_pod_R": _cupR = t; break;
-                case "envgb_thermal_lens": _lens = t; break;
             }
         }
         _found.Clear();
