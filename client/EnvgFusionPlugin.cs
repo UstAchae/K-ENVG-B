@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.68.3";
+    public const string Version = "0.69.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -186,6 +186,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         if (LensView != null && LensView.Value.IsDown() && !Cursor.visible)
         {
             EnvgProbe.LensView = !EnvgProbe.LensView;
+            EnvgProbe.SwitchedLensView();
             Log?.LogInfo("ENVG (temporary): camera " + (EnvgProbe.LensView ? "at the thermal lens" : "back at its own place"));
         }
         // Alt + ← →: the pods (not while a menu, the inventory or the map has the cursor); with Alt held the plain arrows
@@ -1456,6 +1457,88 @@ internal static class EnvgFusion
         return parts;
     }
     private static RenderTexture? _glassMask;
+
+    // ---- the thermal picture from the thermal lens itself (see the shader's lensLook) ----
+    private static readonly int LensAtId = Shader.PropertyToID("_EnvgLensAt"), GunLensId = Shader.PropertyToID("_EnvgGunLens"),
+        GunEyeId = Shader.PropertyToID("_EnvgGunEye"), GunDepthTmpId = Shader.PropertyToID("_EnvgGunDepth");
+    private static RenderTexture? _gunLens, _gunEye;
+    private static GameObject? _gun;
+    private static readonly List<GlassPart> _gunParts = new List<GlassPart>();
+    private static bool _loggedLens;
+
+    // Where the lens is against the camera (as the camera is placed for this frame), and the gun in hand drawn twice:
+    // its distance from the lens, and from the eye (to leave the eye's own view of it out). Without the device's lens
+    // node: the fixed shift as before.
+    private static void DrawGun(CommandBuffer cb, Camera main)
+    {
+        Transform? lensNode = EnvgPods.ThermalLens;
+        EFT.Player? wearer = Wearer;
+        if (lensNode == null || _glassMaterial == null)
+        {
+            Shader.SetGlobalVector(LensAtId, Vector4.zero);
+            return;
+        }
+        Matrix4x4 worldToCam = main.worldToCameraMatrix;
+        Vector3 at = worldToCam.MultiplyPoint3x4(lensNode.position);
+        Shader.SetGlobalVector(LensAtId, new Vector4(at.x, at.y, at.z, 1f));
+        EnvgProbe.LensOffsetCm = new Vector3(at.x, at.y, -at.z) * 100f;
+        GameObject? gun = null;
+        try { gun = wearer?.HandsController?.ControllerGameObject; } catch (System.Exception) { }
+        if (gun != _gun)
+        {
+            _gun = gun;
+            _gunParts.Clear();
+            if (gun != null)
+                foreach (Renderer r in gun.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r is ParticleSystemRenderer || r is LineRenderer || r is TrailRenderer)
+                        continue;
+                    Material[] materials = r.sharedMaterials;
+                    for (int sub = 0; sub < materials.Length; sub++)
+                        if (materials[sub] != null && materials[sub].renderQueue <= 2500)
+                            _gunParts.Add(new GlassPart { Renderer = r, Sub = sub });
+                }
+            EnvgFusionPlugin.Log?.LogInfo("ENVG thermal picture from the thermal lens: lens right " + (at.x * 100f).ToString("F1") + " cm, up " + (at.y * 100f).ToString("F1")
+                + " cm, forward " + (-at.z * 100f).ToString("F1") + " cm of the camera; the gun " + (gun != null ? gun.name : "none") + " drawn from it (" + _gunParts.Count + " parts)");
+        }
+        int w = Mathf.Max(main.pixelWidth, 1), h = Mathf.Max(main.pixelHeight, 1);
+        EnsureGun(ref _gunLens, w, h, "Justachae ENVG gun from the lens");
+        EnsureGun(ref _gunEye, w, h, "Justachae ENVG gun from the eye");
+        Matrix4x4 projection = main.nonJitteredProjectionMatrix;
+        Matrix4x4 lensView = worldToCam * Matrix4x4.Translate(main.transform.position - lensNode.position);
+        cb.GetTemporaryRT(GunDepthTmpId, w, h, 24, FilterMode.Point, RenderTextureFormat.Depth);
+        for (int pass = 0; pass < 2; pass++)
+        {
+            cb.SetRenderTarget(new RenderTargetIdentifier(pass == 0 ? _gunLens! : _gunEye!), new RenderTargetIdentifier(GunDepthTmpId));
+            cb.ClearRenderTarget(true, true, Color.clear);
+            cb.SetViewProjectionMatrices(pass == 0 ? lensView : worldToCam, projection);
+            foreach (GlassPart part in _gunParts)
+                if (part.Renderer != null && part.Renderer.gameObject.activeInHierarchy)
+                    cb.DrawRenderer(part.Renderer, _glassMaterial, part.Sub, 1);
+        }
+        cb.SetViewProjectionMatrices(worldToCam, main.projectionMatrix);
+        cb.ReleaseTemporaryRT(GunDepthTmpId);
+        cb.SetGlobalTexture(GunLensId, _gunLens);
+        cb.SetGlobalTexture(GunEyeId, _gunEye);
+        if (!_loggedLens)
+        {
+            _loggedLens = true;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG: the thermal picture is now what the thermal lens sees (its rays followed over the eye's depth; the gun drawn from the lens)");
+        }
+    }
+
+    private static void EnsureGun(ref RenderTexture? texture, int w, int h, string name)
+    {
+        if (texture != null && texture.width == w && texture.height == h)
+            return;
+        if (texture != null)
+        {
+            texture.Release();
+            Object.Destroy(texture);
+        }
+        texture = new RenderTexture(w, h, 0, RenderTextureFormat.RFloat) { name = name, filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+        texture.Create();
+    }
     private static readonly int GlassMaskId = Shader.PropertyToID("_EnvgGlassMask");
     private static readonly int GlassOnId = Shader.PropertyToID("_EnvgGlassOn");
     private static readonly int HousingTmpId = Shader.PropertyToID("_EnvgHousingDepth"), LensDepthTmpId = Shader.PropertyToID("_EnvgLensDepth");
@@ -1806,6 +1889,7 @@ internal static class EnvgFusion
         _mainCopy.Blit(normals, depth, Material, 12);
         DrawBodies(_mainCopy);
         DrawGlass(_mainCopy, main, jitter);
+        DrawGun(_mainCopy, main);
         _mainCopy.SetGlobalVector(JitterId, Vector4.zero);
 
         if ((main.depthTextureMode & DepthTextureMode.MotionVectors) == 0)

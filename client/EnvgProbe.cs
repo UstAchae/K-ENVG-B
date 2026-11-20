@@ -39,8 +39,48 @@ internal static class EnvgProbe
         if (lens == null)
             return;
         _cameraWas = camera.transform.position;
+        if (!_toldInFront)
+        {
+            _toldInFront = true;
+            TellInFront(camera, lens);
+        }
         camera.transform.position = lens.position;
         _movedCamera = camera;
+    }
+
+    // once per switch: the lens against the camera, and the device's own parts the lens's view meets within 30 cm
+    private static bool _toldInFront;
+    internal static void SwitchedLensView() => _toldInFront = false;
+    private static void TellInFront(Camera camera, Transform lens)
+    {
+        Vector3 d = camera.transform.InverseTransformVector(lens.position - camera.transform.position) * 100f;
+        var said = new System.Text.StringBuilder("ENVG lens view (temporary): lens right " + d.x.ToString("F1") + " cm, up " + d.y.ToString("F1")
+            + " cm, forward " + d.z.ToString("F1") + " cm of the camera (placed); in front of it:");
+        Transform device = lens;
+        while (device.parent != null && !device.name.StartsWith("nvg_envgb"))
+            device = device.parent;
+        if (device.parent != null)
+            device = device.parent;
+        int found = 0;
+        foreach (Renderer r in device.GetComponentsInChildren<Renderer>(false))
+        {
+            // the view's centre and its four corners at a quarter of the field
+            for (int k = 0; k < 5; k++)
+            {
+                Vector3 dir = camera.transform.forward;
+                if (k > 0)
+                    dir = camera.ViewportPointToRay(new Vector3(k == 1 ? 0.25f : k == 2 ? 0.75f : 0.5f, k == 3 ? 0.25f : k == 4 ? 0.75f : 0.5f, 0f)).direction;
+                if (r.bounds.IntersectRay(new Ray(lens.position, dir), out float at) && at < 0.3f)
+                {
+                    said.Append(" " + r.name + " (" + (at * 100f).ToString("F1") + " cm, ray " + k + ", bounds " + (r.bounds.size * 100f).ToString("F1") + " cm)");
+                    found++;
+                    break;
+                }
+            }
+        }
+        if (found == 0)
+            said.Append(" nothing of " + device.name);
+        EnvgFusionPlugin.Log?.LogInfo(said.ToString());
     }
 
     internal static void LensViewPostRender(Camera camera)
@@ -99,8 +139,6 @@ internal static class EnvgProbe
             _picture.Create();
         }
         Matrix4x4 view = main.worldToCameraMatrix * Matrix4x4.Translate(main.transform.position - lens.position);
-        Vector3 d = main.transform.InverseTransformVector(lens.position - main.transform.position) * 100f;
-        LensOffsetCm = d;
         Matrix4x4 projection = Matrix4x4.Perspective(main.fieldOfView, (float)Width / Height, 0.01f, 20f);
         _draw ??= new CommandBuffer { name = "Justachae ENVG probe" };
         _draw.Clear();

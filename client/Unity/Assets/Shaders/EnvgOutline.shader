@@ -224,6 +224,122 @@ Shader "Justachae/ENVG/Outline"
         return toChain(uv + slope / max(d, 0.25));
     }
 
+    // The thermal picture as the thermal lens itself sees it, from the device's own lens (the model's envgb_thermal_lens:
+    // wherever the mount and the pod put it). The scene is known from the eye only (its depth, as the thermal picture):
+    // each ray of the lens is followed out from the lens over that depth, as the eye saw it, to where it first meets a
+    // surface; the picture there is what the lens sees along that ray. The gun in hand is near, where the eye and the
+    // lens differ most: it is drawn again from the lens itself (its distance from the lens), its outline found there,
+    // and its heat read where the eye saw the same point; the eye's own view of the gun is left out of the march (and its
+    // outline as the eye saw it is not shown). xyz: the lens in the camera's view space; w 1 on (else the fixed shift).
+    float4 _EnvgLensAt;
+    sampler2D _EnvgGunLens, _EnvgGunEye;   // the gun's distance (m): from the lens; from the eye (0: none)
+    float4 _EnvgGunLens_TexelSize;
+
+    float2 eyeUvOf(float3 p) { return p.xy / max(-p.z, 1e-4) / _EnvgRpTan.xy * 0.5 + 0.5; }
+    float sceneZ(float2 su)
+    {
+        float d = tex2Dlod(_EnvgDepth, float4(toChain(su), 0, 0)).r;
+        return d <= 0.0 ? 1e5 : d;   // (no surface: the sky, far)
+    }
+    bool eyeGun(float2 su) { return tex2Dlod(_EnvgGunEye, float4(su, 0, 0)).r > 0.0; }
+    bool onScreen(float2 su) { return all(su >= 0.0) && all(su <= 1.0); }
+    float gunFromLens(float2 uv)
+    {
+        float g = tex2Dlod(_EnvgGunLens, float4(uv, 0, 0)).r;
+        return g > 0.0 ? g : 50.0;
+    }
+    // the gun's outline as the lens sees it: where its distance jumps (its edge against what is behind, a part in front
+    // of another)
+    float gunOutline(float2 uv)
+    {
+        float2 t = _EnvgGunLens_TexelSize.xy;
+        float d = gunFromLens(uv);
+        float jump = 0;
+        [unroll] for (int k = 0; k < 4; k++)
+        {
+            float2 o = (k == 0 ? float2(1, 0) : k == 1 ? float2(-1, 0) : k == 2 ? float2(0, 1) : float2(0, -1)) * t;
+            float dn = gunFromLens(uv + o);
+            jump = max(jump, abs(dn - d) / max(min(d, dn), 0.05));
+        }
+        return smoothstep(0.03, 0.08, jump);
+    }
+
+    struct LensLook
+    {
+        float2 tuv;      // the thermal textures' uv of what the lens sees there
+        float gun;       // 1: the gun, seen by the lens before anything else
+        float rim;       // the gun's outline there (as the lens sees it)
+        float clean;     // 0 where the picture fetched is next to the eye's own view of the gun (its outline as the eye
+                         // saw it, not the lens): the scene's lines left out there
+    };
+
+    LensLook lensLook(float2 uv)
+    {
+        LensLook o;
+        o.tuv = float2(0, 0); o.gun = 0; o.rim = 0; o.clean = 1;
+        if (_EnvgLensAt.w < 0.5)
+        {
+            o.tuv = thermalUv(uv);
+            return o;
+        }
+        float3 L = _EnvgLensAt.xyz;
+        float3 r = float3((uv * 2.0 - 1.0) * _EnvgRpTan.xy, -1.0);   // the lens's ray (its turn is the camera's); t: distance ahead
+        // out from the lens in even steps of 1 / distance (even steps across the eye's picture), to the first surface
+        // the ray goes behind, then narrowed down; a crossing much behind the surface is the ray passing behind
+        // something (seen from the eye only), and the march goes on
+        const int Steps = 40;
+        const float Near = 0.12;
+        float2 hit = eyeUvOf(L + r * 1e4);
+        float tHit = 1e5;
+        float before = Near;
+        [loop] for (int k = 1; k <= Steps; k++)
+        {
+            float t = k == Steps ? 1e4 : 1.0 / ((1.0 / Near) * (1.0 - (float)k / Steps));
+            float3 p = L + r * t;
+            float2 q = eyeUvOf(p);
+            if (!onScreen(q) || eyeGun(q) || sceneZ(q) < 0.15)
+            {
+                before = t;
+                continue;
+            }
+            if (-p.z >= sceneZ(q))
+            {
+                float lo = before, hi = t;
+                [unroll] for (int j = 0; j < 6; j++)
+                {
+                    float mid = 2.0 / (1.0 / lo + 1.0 / hi);
+                    float3 pm = L + r * mid;
+                    if (-pm.z >= sceneZ(eyeUvOf(pm)))
+                        hi = mid;
+                    else
+                        lo = mid;
+                }
+                float3 ph = L + r * hi;
+                float2 qh = eyeUvOf(ph);
+                float ds = sceneZ(qh);
+                if (abs(-ph.z - ds) < 0.05 + 0.04 * ds)
+                {
+                    hit = qh;
+                    tHit = hi;
+                    break;
+                }
+            }
+            before = t;
+        }
+        o.tuv = toChain(hit);
+        float g = tex2Dlod(_EnvgGunLens, float4(uv, 0, 0)).r;
+        if (g > 0.0 && g < tHit)
+        {
+            o.gun = 1;
+            o.tuv = toChain(eyeUvOf(L + r * g));   // its heat: where the eye saw that same point
+        }
+        o.rim = gunOutline(uv);
+        float2 e = _EnvgGunLens_TexelSize.xy * 4.0;
+        if (eyeGun(hit) || eyeGun(hit + float2(e.x, 0)) || eyeGun(hit - float2(e.x, 0)) || eyeGun(hit + float2(0, e.y)) || eyeGun(hit - float2(0, e.y)))
+            o.clean = 0;
+        return o;
+    }
+
     // the thermal picture is a rectangle (4:3) within the tubes' round field: outside it, the tubes' picture alone
     // when another mod's eyepieces show the picture (EyepieceFusion): xy the tubes' axis on the screen (uv), z how far
     // the device is down (the picture fades in as it settles), w 1; otherwise all 0, the field at the screen's centre
@@ -307,14 +423,17 @@ Shader "Justachae/ENVG/Outline"
         float field = thermalField(i.uv);
         if (field <= 0.0)
             return float4(0, 0, 0, 1);
-        float2 tuv = thermalUv(i.uv);
-        field *= beyondLens(tuv) * (1.0 - sightGlass(i.uv));
+        LensLook look = lensLook(i.uv);
+        float2 tuv = look.tuv;
+        field *= (look.gun > 0.5 ? 1.0 : beyondLens(tuv)) * (1.0 - sightGlass(i.uv));
         if (field <= 0.0)
             return float4(0, 0, 0, 1);
-        float core = edgeAt(tuv);
+        // the scene's lines (not over the gun, nor its outline as the eye saw it), and the gun's as the lens sees it
+        float scene = look.gun > 0.5 ? 0.0 : look.clean;
+        float core = max(edgeAt(tuv) * scene, look.rim);
         // the glow around each line, as the overlay's bright lines bloom in the eyepiece: the lines blurred (a few
         // pixels), not a ring of shifted copies (which drew a crosshatch into every line)
-        float halo = saturate(tex2D(_EnvgGlow, tuv).r * 5.0);
+        float halo = max(saturate(tex2D(_EnvgGlow, tuv).r * 5.0) * scene, look.rim * 0.5);
         // declutter: where lines crowd (foliage, every leaf an edge) each line is dimmed in proportion, so a tree is
         // a textured mass rather than a solid glare; a line on its own keeps its full strength
         float density = tex2D(_EnvgDensity, tuv).r;
@@ -1079,8 +1198,9 @@ Shader "Justachae/ENVG/Outline"
                 float field = thermalField(i.uv);
                 if (field <= 0.0)
                     return float4(0, 0, 0, 0);
-                float2 tuv = thermalUv(i.uv);
-                field *= beyondLens(tuv) * (1.0 - sightGlass(i.uv));
+                LensLook look = lensLook(i.uv);
+                float2 tuv = look.tuv;
+                field *= (look.gun > 0.5 ? 1.0 : beyondLens(tuv)) * (1.0 - sightGlass(i.uv));
                 // the picture in two layers, as a thermal core's detail enhancement makes it: the base (the heat averaged
                 // over one surface only, so no halo crosses an edge), equalized over the display; the detail (the heat
                 // less its base: a face, the gear, the bark), added on top
