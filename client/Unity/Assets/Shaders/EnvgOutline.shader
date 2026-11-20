@@ -225,6 +225,13 @@ Shader "Justachae/ENVG/Outline"
     float4 _EnvgHeatTemporal;      // x: the history's share held to this frame's neighbourhood; y: 1 when last depth is there
     #define HeatFrames 32.0
     #define SpreadHeld 6.0
+    // nearer than this, a thing is taken to go with the camera (the gun, the hands): not the still world
+    #define NearHeld 1.2
+    bool nearHeld(float2 cuv)
+    {
+        float d = tex2Dlod(_EnvgDepth, float4(cuv, 0, 0)).r;
+        return d > 0.0 && d < NearHeld;
+    }
     bool sameSurfaceThen(float2 previous, float predicted)
     {
         if (predicted <= 0.0 || _EnvgHeatTemporal.y <= 0.0)
@@ -269,6 +276,22 @@ Shader "Justachae/ENVG/Outline"
     // A real change (a body's heat, a door opened on a warm room) is the history far outside this frame's own spread
     // around the point (its mean and spread over the 5 x 5, as TAA's variance test); then the frames start anew from this
     // one. Within it, the history holds and the frames keep being averaged. (_MainTex: this frame's heat.)
+    float4 spreadAround(float2 uv)
+    {
+        float2 t = _MainTex_TexelSize.xy;
+        float4 m1 = 0, m2 = 0;
+        [unroll] for (int y = -2; y <= 2; y++)
+        {
+            [unroll] for (int x = -2; x <= 2; x++)
+            {
+                float4 v = tex2Dlod(_MainTex, float4(uv + float2(x, y) * t, 0, 0));
+                m1 += v;
+                m2 += v * v;
+            }
+        }
+        m1 /= 25.0;
+        return sqrt(max(m2 / 25.0 - m1 * m1, 0.0));
+    }
     bool historyHolds(float2 uv, float2 previous)
     {
         float2 t = _MainTex_TexelSize.xy;
@@ -1703,14 +1726,32 @@ Shader "Justachae/ENVG/Outline"
                 // another sub-pixel, change a little every frame though nothing moved; only many frames together are
                 // steady. On the same surface the frames are averaged (see sameSurfaceThen); elsewhere (people,
                 // something that came into view) last frame's heat is held to this frame's neighbourhood, as before.
+                // the gun and the hands go with the camera: last frame's heat at the same place on the screen, held
+                // to this frame's neighbourhood (not followed as the still world: that drew their ghosts)
+                if (nearHeld(i.uv))
+                {
+                    float2 same = toChainPrev(toScreen(i.uv));
+                    return lerp(c, clamp(tex2D(_EnvgHeatHistory, same), lo, hi), _EnvgHeatTemporal.x);
+                }
                 if (sameSurfaceThen(previous, predicted))
                 {
                     if (!historyHolds(i.uv, previous))
                         return c;
-                    float n = min(tex2Dlod(_EnvgHeatCount, float4(previous, 0, 0)).r, HeatFrames);
-                    return lerp(c, heatHistoryAt(previous), n / (n + 1.0));
+                    float n = tex2Dlod(_EnvgHeatCount, float4(previous, 0, 0)).r;
+                    n = n >= 0.0 ? min(n, HeatFrames) : 0.0;   // (nothing valid there: none)
+                    float4 hh = heatHistoryAt(previous);
+                    if (any(hh != hh))
+                        return c;
+                    // held to this frame's range around the point, widened by its spread: the frames' mean of a
+                    // still surface stays inside (and keeps being averaged); what moved off (an edge's old place, a
+                    // ghost) is far outside and is cut back to what is here now
+                    float4 sd = spreadAround(i.uv);
+                    return lerp(c, clamp(hh, lo - sd, hi + sd), n / (n + 1.0));
                 }
-                return lerp(c, clamp(tex2D(_EnvgHeatHistory, previous), lo, hi), _EnvgHeatTemporal.x);
+                float4 hc = tex2D(_EnvgHeatHistory, previous);
+                if (any(hc != hc))
+                    return c;
+                return lerp(c, clamp(hc, lo, hi), _EnvgHeatTemporal.x);
             }
             ENDCG
         }
@@ -1742,6 +1783,8 @@ Shader "Justachae/ENVG/Outline"
                 float2 previous = previousUvAt(i.uv, predicted);
                 if (_EnvgHeatTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
                     return 0;
+                if (nearHeld(i.uv))
+                    return 1;
                 if (sameSurfaceThen(previous, predicted))
                     return historyHolds(i.uv, previous) ? min(tex2Dlod(_EnvgHeatCount, float4(previous, 0, 0)).r + 1.0, HeatFrames) : 1.0;
                 return 1;

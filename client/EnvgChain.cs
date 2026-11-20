@@ -35,6 +35,7 @@ internal sealed class EnvgChainInput
     public float LineBase = 0.4f, LineHot = 1.2f, LineHotAbove = 12f;
     public float Smoothing = 1f, HeatEdges = 1f, GeometryEdges = 1f, LocalContrast = 1f, ShapeNeedsHeat = 1f, Temporal = 0.8f, Declutter = 1f;
     public float HeatTemporal = 0.8f;   // the heat picture's own history share (pass 36)
+    public int Frame = -1;              // the frame's number (a gap starts the history anew); -1 unknown
 }
 
 internal static class EnvgChain
@@ -104,7 +105,7 @@ internal static class EnvgChain
     private static readonly int DepthPrevId = Shader.PropertyToID("_EnvgDepthPrev");
     // how many frames the heat's history holds, per pixel (pass 38), ping-pong with the history
     private static RenderTexture? _countA, _countB;
-    internal static RenderTexture? HeatCountNow;   // TEMPORARY (the probe)
+    private static int _lastFrame = -1;
     private static readonly int HeatCountId = Shader.PropertyToID("_EnvgHeatCount"), HistSizeId = Shader.PropertyToID("_EnvgHistSize");
     private static readonly int HeatHistoryId = Shader.PropertyToID("_EnvgHeatHistory");
     private static readonly int HeatTemporalId = Shader.PropertyToID("_EnvgHeatTemporal");
@@ -306,17 +307,25 @@ internal static class EnvgChain
         cb.Blit(t.Heat2x, t.Seams, m, 16);
         cb.Blit(t.Seams, t.HistoryB);
         // followed in time (the jittered copy's edges settle, as the game's TAA settles its picture)
+        // (a gap in the frames, the thermal picture off for a while, leaves the history stale: it starts anew)
+        if (t.Frame >= 0 && _lastFrame >= 0 && t.Frame != _lastFrame + 1)
+            ResetHistory();
+        _lastFrame = t.Frame;
         if (t.FromMain && t.MotionReady && t.HeatTemporal > 0f && t.Motion != null && t.HistoryB != null)
         {
+            // (made anew at another size, the history and its count hold nothing yet: the history starts anew)
+            RenderTexture? wasA = _heatHistA, wasB = _heatHistB, wasCa = _countA, wasCb = _countB;
             Ensure(ref _heatHistA, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.ARGBHalf, "Justachae ENVG heat, followed A");
             Ensure(ref _heatHistB, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.ARGBHalf, "Justachae ENVG heat, followed B");
+            Ensure(ref _countA, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.RHalf, "Justachae ENVG heat, frames held A");
+            Ensure(ref _countB, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.RHalf, "Justachae ENVG heat, frames held B");
+            if (wasA != _heatHistA || wasB != _heatHistB || wasCa != _countA || wasCb != _countB)
+                _heatHistoryValid = false;
             RenderTexture previous = _heatFlip ? _heatHistA! : _heatHistB!;
             RenderTexture next = _heatFlip ? _heatHistB! : _heatHistA!;
             _heatFlip = !_heatFlip;
             cb.SetGlobalTexture(MotionId, t.Motion);
             cb.SetGlobalTexture(HeatHistoryId, previous);
-            Ensure(ref _countA, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.RHalf, "Justachae ENVG heat, frames held A");
-            Ensure(ref _countB, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.RHalf, "Justachae ENVG heat, frames held B");
             RenderTexture countThen = _heatFlip ? _countB! : _countA!, countNow = _heatFlip ? _countA! : _countB!;
             cb.SetGlobalTexture(HeatCountId, countThen);
             cb.SetGlobalVector(HistSizeId, new Vector4(1f / t.HistoryB.width, 1f / t.HistoryB.height, t.HistoryB.width, t.HistoryB.height));
@@ -326,7 +335,6 @@ internal static class EnvgChain
             cb.SetGlobalVector(HeatTemporalId, new Vector4(_heatHistoryValid ? t.HeatTemporal : 0f, _heatHistoryValid && depthPrevOk ? 1f : 0f, 0f, 0f));
             cb.Blit(t.HistoryB, next, m, 36);
             cb.Blit(t.HistoryB, countNow, m, 38);
-            HeatCountNow = countNow;
             cb.Blit(next, t.HistoryB);
             _heatHistoryValid = true;
         }
@@ -409,6 +417,7 @@ internal static class EnvgChain
         if (t.Depth != null)
         {
             Ensure(ref _depthPrev, t.Depth.width, t.Depth.height, RenderTextureFormat.RGFloat, "Justachae ENVG depth, last frame");
+            // (written below this frame: valid from the next on)
             cb.Blit(t.Depth, _depthPrev);
             _depthPrevValid = true;
         }

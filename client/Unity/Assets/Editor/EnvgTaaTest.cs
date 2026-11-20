@@ -41,12 +41,12 @@ public static class EnvgTaaTest
 
     static bool PicNoise = true, AlbNoise = true;
     static int Frames = 300;
-    static bool Step = true, NormNoise = false;
+    static bool Step = true, NormNoise = false, Move = false;
     public static void Run()
     {
-        foreach (var c in new[] { (false, false), (false, true) })
+        foreach (var c in new[] { (false, true, false), (false, true, true) })
         {
-            Step = c.Item1; NormNoise = c.Item2; PicNoise = AlbNoise = true;
+            Step = c.Item1; NormNoise = c.Item2; Move = c.Item3; PicNoise = AlbNoise = true;
             RunOnce();
         }
     }
@@ -109,6 +109,16 @@ public static class EnvgTaaTest
         int counted = 0;
         for (int f = 0; f < Frames; f++)
         {
+            int shift = Move ? Mathf.Clamp(f - 100, 0, 30) * 2 : 0;
+            if (Move && f >= 100 && f <= 130)
+            {
+                var dep = new Color[W * H];
+                for (int y = 0; y < H; y++)
+                    for (int x = 0; x < W; x++)
+                        dep[y * W + x] = new Color(x > 90 + shift && x < 170 + shift && y > 60 && y < 130 ? 2f : 4f, 0f, 0f, 1f);
+                if (t.Depth != null) { t.Depth.Release(); Object.DestroyImmediate(t.Depth); }
+                t.Depth = Upload(dep, RenderTextureFormat.RGFloat);
+            }
             var pic = new Color[W * H];
             for (int i = 0; i < pic.Length; i++)
             {
@@ -122,7 +132,9 @@ public static class EnvgTaaTest
             for (int i = 0; i < alb.Length; i++)
             {
                 float n = AlbNoise ? (float)(rnd.NextDouble() - 0.5) * 0.025f : 0f;
-                float a = albedo[i].r + ((i % W) / 16 % 2 == 0 ? 0.1f : 0f) + n + (Step && f >= 200 && (i % W) < 40 ? 0.2f : 0f);
+                int bx = i % W, by = i / W;
+                bool inBox = Move && bx > 90 + shift && bx < 170 + shift && by > 60 && by < 130;
+                float a = albedo[i].r + (bx / 16 % 2 == 0 ? 0.1f : 0f) + n + (Step && f >= 200 && bx < 40 ? 0.2f : 0f) + (inBox ? 0.3f : 0f);
                 alb[i] = new Color(a, a, a, 1f);
             }
             if (t.Albedo != null) { t.Albedo.Release(); Object.DestroyImmediate(t.Albedo); }
@@ -143,6 +155,18 @@ public static class EnvgTaaTest
             Graphics.ExecuteCommandBuffer(cb);
             cb.Release();
             float[][] now = { ReadR(t.Picture), ReadR(t.Heat2x!), ReadR(t.HistoryB!), ReadR(t.Edges!), ReadR(t.Ridge!) };
+            if (Move && f == 131)
+            {
+                // where the box was and is no more: the heat followed should be the wall's again (no ghost)
+                double ghost = 0; int nG = 0;
+                for (int y = 70; y < 120; y++)
+                    for (int x = 95; x < 145; x++)
+                    {
+                        ghost += now[2][y * W + x] - now[2][y * W + 20 + (x % 16)];
+                        nG++;
+                    }
+                Debug.Log("ENVG_TAA_GHOST box moved off: heat followed there minus the wall " + (ghost / nG).ToString("F5") + " (the box was 0.30 albedo = " + (8f * 0.3f / 100f).ToString("F4") + " warmer)");
+            }
             if (f >= 198 && f <= 260 && (f % 4 == 0 || f < 204))
                 Debug.Log("ENVG_TAA_STEP frame " + f + ": heat " + now[1][96 * W + 20].ToString("F4") + " followed " + now[2][96 * W + 20].ToString("F4"));
             if (f >= Frames - 30)
@@ -157,7 +181,7 @@ public static class EnvgTaaTest
             }
             last = now;
         }
-        var said = new System.Text.StringBuilder("ENVG_TAA_TEST (step " + Step + ", normals noise " + NormNoise + ") frame-to-frame change over " + counted + " frames:");
+        var said = new System.Text.StringBuilder("ENVG_TAA_TEST (step " + Step + ", moving box " + Move + ") frame-to-frame change over " + counted + " frames:");
         for (int s = 0; s < 5; s++)
             said.Append(" " + names[s] + " " + (change[s] / System.Math.Max(level[s], 1e-9) * 100.0).ToString("F2") + "%");
         Debug.Log(said.ToString());

@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.72.2";
+    public const string Version = "0.72.3";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -576,7 +576,7 @@ internal static class EnvgFusion
         t.HistoryB = HistoryB; t.Blurred = Blurred; t.Surround = Surround; t.Across = Across; t.Edges = Edges; t.Presence = Presence;
         t.Density = Density; t.Glow = Glow; t.LocalSquare = LocalSquare; t.LocalMoments = LocalMoments; t.Ridge = Ridge;
         t.LitSoft = LitSoft; t.AlbedoSoft = AlbedoSoft; t.Motion = Motion; t.EdgeHistA = EdgeHistA; t.EdgeHistB = EdgeHistB;
-        t.FromMain = true; t.MotionReady = _motionReady;
+        t.FromMain = true; t.MotionReady = _motionReady; t.Frame = Time.frameCount;
         t.Width = width; t.Height = height; t.Oversample = Oversample;
         t.CamToWorld = _camToWorld; t.Tan = _tan; t.DeltaTime = Time.unscaledDeltaTime;
         t.Amount = EnvgFusionPlugin.Amount?.Value ?? 1f;
@@ -607,7 +607,6 @@ internal static class EnvgFusion
         return t;
     }
 
-    private static readonly RenderTexture?[] _probeSteps = new RenderTexture?[9];   // TEMPORARY
     private static void FillOverlay(int width, int height)
     {
         if (_overlayDraw == null || Material == null || Picture == null || Normals == null || Depth == null || Albedo == null || Specular == null || Heat2x == null || Seams == null || GeoSource == null || GeoAcross == null || GeoNear == null || GeoFar == null
@@ -616,10 +615,6 @@ internal static class EnvgFusion
             return;
         _overlayDraw.Clear();
         EnvgChain.Fill(_overlayDraw, Material, ChainInput(width, height));
-        // TEMPORARY: the chain probe's steps
-        _probeSteps[0] = Depth; _probeSteps[1] = Heat2x; _probeSteps[2] = HistoryB; _probeSteps[3] = AlbedoSoft; _probeSteps[4] = NormalsSoft; _probeSteps[5] = GrassMask;
-        _probeSteps[6] = EnvgChain.HeatCountNow; _probeSteps[7] = Edges; _probeSteps[8] = Ridge;
-        EnvgAlignProbe.Append(_overlayDraw, _probeSteps);
     }
 
     private static void Blur(CommandBuffer cb, RenderTexture from, RenderTexture to, float step, int width, int height, RenderTexture? across = null)
@@ -1291,13 +1286,6 @@ internal static class EnvgFusion
             Shader.SetGlobalMatrix(RpPrevWorldToCamId, _hasPrevCamera ? _prevWorldToCam : worldToCam);
             Shader.SetGlobalVector(RpTanId, new Vector4(_tan.x, _tan.y, _hasPrevCamera ? _prevTan.x : _tan.x, _hasPrevCamera ? _prevTan.y : _tan.y));
             Shader.SetGlobalVector(RpOnId, new Vector4(1f, 0f, 0f, 0f));
-            // TEMPORARY: the alignment probe notes what the following uses this frame
-            {
-                Vector4 cropNow = _crop.z > 0f ? _crop : new Vector4(0f, 0f, 1f, 1f), cropThen = _cropPrev.z > 0f ? _cropPrev : new Vector4(0f, 0f, 1f, 1f);
-                Vector2 jit = new Vector2(drawn.m02 - unjittered.m02, drawn.m12 - unjittered.m12) * -0.5f;
-                EnvgAlignProbe.Note(_camToWorld, _hasPrevCamera ? _prevWorldToCam : worldToCam, _tan, _hasPrevCamera ? _prevTan : _tan, jit, cropNow, cropThen,
-                    depth.width, depth.height, main.transform.rotation, main.transform.position);
-            }
             if (Motion != null) Shader.SetGlobalTexture(RpMotionId, Motion);
             if (BodyMask != null) Shader.SetGlobalTexture(RpBodyId, BodyMask);
             _prevWorldToCam = worldToCam;
