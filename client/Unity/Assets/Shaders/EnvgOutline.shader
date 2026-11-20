@@ -216,6 +216,77 @@ Shader "Justachae/ENVG/Outline"
         return previousUvAt(cuv, predicted);
     }
 
+    // The heat's history (pass 36) and how many frames it holds (pass 38). Where last frame saw this very surface (the
+    // still world followed exactly by the camera, last frame's depth around that place holding this point's distance),
+    // the history is this point's own and the frames are averaged as they come (each new one 1 / (n + 1)), up to
+    // HeatFrames: a still view settles to the mean of many frames, as the game's TAA settles its picture.
+    sampler2D _EnvgHeatHistory, _EnvgHeatCount, _EnvgDepthPrev;
+    float4 _EnvgHistSize;          // xy: one chain pixel (uv), zw: the chain's size (the history, its count and last depth)
+    float4 _EnvgHeatTemporal;      // x: the history's share held to this frame's neighbourhood; y: 1 when last depth is there
+    #define HeatFrames 32.0
+    #define SpreadHeld 6.0
+    bool sameSurfaceThen(float2 previous, float predicted)
+    {
+        if (predicted <= 0.0 || _EnvgHeatTemporal.y <= 0.0)
+            return false;
+        float dlo = 1e6, dhi = 0.0;
+        [unroll] for (int y = -1; y <= 1; y++)
+        {
+            [unroll] for (int x = -1; x <= 1; x++)
+            {
+                float dp = tex2Dlod(_EnvgDepthPrev, float4(previous + float2(x, y) * _EnvgHistSize.xy, 0, 0)).r;
+                dp = dp <= 0.0 ? 1e5 : dp;
+                dlo = min(dlo, dp);
+                dhi = max(dhi, dp);
+            }
+        }
+        return predicted >= dlo * 0.97 && predicted <= dhi * 1.03;
+    }
+    // last frame's heat fetched sharply (Catmull-Rom, five taps): a plain bilinear fetch every frame, the view moving
+    // by a fraction of a pixel, would soften the picture more with each frame it holds
+    float4 heatHistoryAt(float2 uv)
+    {
+        float2 size = _EnvgHistSize.zw;
+        float2 p = uv * size;
+        float2 p1 = floor(p - 0.5) + 0.5;
+        float2 f = p - p1;
+        float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+        float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+        float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+        float2 w3 = f * f * (-0.5 + 0.5 * f);
+        float2 w12 = w1 + w2;
+        float2 p12 = (p1 + w2 / w12) / size;
+        float2 p0 = (p1 - 1.0) / size;
+        float2 p3 = (p1 + 2.0) / size;
+        float4 r = tex2Dlod(_EnvgHeatHistory, float4(p12.x, p0.y, 0, 0)) * (w12.x * w0.y)
+                 + tex2Dlod(_EnvgHeatHistory, float4(p0.x, p12.y, 0, 0)) * (w0.x * w12.y)
+                 + tex2Dlod(_EnvgHeatHistory, float4(p12.x, p12.y, 0, 0)) * (w12.x * w12.y)
+                 + tex2Dlod(_EnvgHeatHistory, float4(p3.x, p12.y, 0, 0)) * (w3.x * w12.y)
+                 + tex2Dlod(_EnvgHeatHistory, float4(p12.x, p3.y, 0, 0)) * (w12.x * w3.y);
+        return r / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y);
+    }
+
+    // A real change (a body's heat, a door opened on a warm room) is the history far outside this frame's own spread
+    // around the point (its mean and spread over the 5 x 5, as TAA's variance test); then the frames start anew from this
+    // one. Within it, the history holds and the frames keep being averaged. (_MainTex: this frame's heat.)
+    bool historyHolds(float2 uv, float2 previous)
+    {
+        float2 t = _MainTex_TexelSize.xy;
+        float m1 = 0, m2 = 0;
+        [unroll] for (int y = -2; y <= 2; y++)
+        {
+            [unroll] for (int x = -2; x <= 2; x++)
+            {
+                float v = tex2Dlod(_MainTex, float4(uv + float2(x, y) * t, 0, 0)).r;
+                m1 += v;
+                m2 += v * v;
+            }
+        }
+        m1 /= 25.0;
+        float sd = sqrt(max(m2 / 25.0 - m1 * m1, 0.0));
+        return abs(heatHistoryAt(previous).r - m1) <= SpreadHeld * sd + 1e-5;
+    }
+
     // the thermal lens sits above the tubes, its axis aligned with theirs at infinity: something near is seen by it a
     // little lower than by the tubes, by the lens's height over the distance. What shows at a point of the eyepiece is
     // what the thermal lens sees there: the scene that far above it.
@@ -1589,20 +1660,6 @@ Shader "Justachae/ENVG/Outline"
             ENDCG
         }
 
-        // 37: the tube's picture at the set gain (the eyepieces' copy of it)
-        Pass
-        {
-            CGPROGRAM
-            #pragma vertex vert
-            #pragma fragment fragI2Gain
-            float4 fragI2Gain(v2f i) : SV_Target
-            {
-                float4 c = tex2D(_MainTex, i.uv);
-                return float4(c.rgb * (1.0 - _EnvgI2Dim.x), c.a);
-            }
-            ENDCG
-        }
-
         // 36: the heat picture followed in time, as the game's TAA follows its own picture. The scene is copied from a
         // camera jittered by a sub-pixel each frame: the copy is shifted back, but which pixels an edge covers still
         // changes from frame to frame (the game smooths that over frames for its picture, not for its buffers), so
@@ -1614,11 +1671,6 @@ Shader "Justachae/ENVG/Outline"
             #pragma vertex vert
             #pragma fragment fragHeatTemporal
             sampler2D _EnvgMotion;
-            sampler2D _EnvgHeatHistory;   // last frame's followed heat picture
-            float4 _EnvgHeatTemporal;     // x: the share of the history held to this frame's neighbourhood; y: the share
-                                          // where last frame saw the same surface (0: no last depth)
-            sampler2D _EnvgDepthPrev;     // last frame's depth (its own crop)
-            float4 _EnvgDepthPrev_TexelSize;
             float4 fragHeatTemporal(v2f i) : SV_Target
             {
                 float2 t = _MainTex_TexelSize.xy;
@@ -1637,33 +1689,52 @@ Shader "Justachae/ENVG/Outline"
                 float2 previous = previousUvAt(i.uv, predicted);
                 if (_EnvgHeatTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
                     return c;
-                float4 h = tex2D(_EnvgHeatHistory, previous);
-                // As the game's TAA settles its picture: the copy of a jittered frame, and the light's own dithering,
-                // change a little every frame though nothing moved; only many frames together are steady. Where last
-                // frame saw this very surface (the still world, followed exactly by the camera, and last frame's depth
-                // around that place holding this point's distance), last frame's heat is this point's own, kept whole and
-                // blended in: the picture settles to the frames' mean. Held to this frame's neighbourhood, as before,
-                // only where it is not that surface (people, something that came into view).
-                bool same = false;
-                if (predicted > 0.0 && _EnvgHeatTemporal.y > 0.0)
+                // As the game's TAA settles its picture: the copy of a jittered frame, and the textures sampled at
+                // another sub-pixel, change a little every frame though nothing moved; only many frames together are
+                // steady. On the same surface the frames are averaged (see sameSurfaceThen); elsewhere (people,
+                // something that came into view) last frame's heat is held to this frame's neighbourhood, as before.
+                if (sameSurfaceThen(previous, predicted))
                 {
-                    float2 t2 = _EnvgDepthPrev_TexelSize.xy;
-                    float dlo = 1e6, dhi = 0.0;
-                    [unroll] for (int y = -1; y <= 1; y++)
-                    {
-                        [unroll] for (int x = -1; x <= 1; x++)
-                        {
-                            float dp = tex2Dlod(_EnvgDepthPrev, float4(previous + float2(x, y) * t2, 0, 0)).r;
-                            dp = dp <= 0.0 ? 1e5 : dp;
-                            dlo = min(dlo, dp);
-                            dhi = max(dhi, dp);
-                        }
-                    }
-                    same = predicted >= dlo * 0.97 && predicted <= dhi * 1.03;
+                    if (!historyHolds(i.uv, previous))
+                        return c;
+                    float n = min(tex2Dlod(_EnvgHeatCount, float4(previous, 0, 0)).r, HeatFrames);
+                    return lerp(c, heatHistoryAt(previous), n / (n + 1.0));
                 }
-                if (same)
-                    return lerp(c, h, _EnvgHeatTemporal.y);
-                return lerp(c, clamp(h, lo, hi), _EnvgHeatTemporal.x);
+                return lerp(c, clamp(tex2D(_EnvgHeatHistory, previous), lo, hi), _EnvgHeatTemporal.x);
+            }
+            ENDCG
+        }
+        // 37: the tube's picture at the set gain (the eyepieces' copy of it)
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragI2Gain
+            float4 fragI2Gain(v2f i) : SV_Target
+            {
+                float4 c = tex2D(_MainTex, i.uv);
+                return float4(c.rgb * (1.0 - _EnvgI2Dim.x), c.a);
+            }
+            ENDCG
+        }
+
+
+        // 38: how many frames the heat's history now holds (pass 36): one more where last frame saw the same surface
+        // (up to HeatFrames), one where it was held to the neighbourhood, none where there was no history
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragHeatCount
+            float4 fragHeatCount(v2f i) : SV_Target
+            {
+                float predicted;
+                float2 previous = previousUvAt(i.uv, predicted);
+                if (_EnvgHeatTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
+                    return 0;
+                if (sameSurfaceThen(previous, predicted))
+                    return historyHolds(i.uv, previous) ? min(tex2Dlod(_EnvgHeatCount, float4(previous, 0, 0)).r + 1.0, HeatFrames) : 1.0;
+                return 1;
             }
             ENDCG
         }

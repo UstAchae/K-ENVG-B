@@ -102,7 +102,9 @@ internal static class EnvgChain
     private static RenderTexture? _depthPrev;
     private static bool _depthPrevValid;
     private static readonly int DepthPrevId = Shader.PropertyToID("_EnvgDepthPrev");
-    private const float SettledShare = 0.9f;   // the history's share on the same surface (as the game's TAA)
+    // how many frames the heat's history holds, per pixel (pass 38), ping-pong with the history
+    private static RenderTexture? _countA, _countB;
+    private static readonly int HeatCountId = Shader.PropertyToID("_EnvgHeatCount"), HistSizeId = Shader.PropertyToID("_EnvgHistSize");
     private static readonly int HeatHistoryId = Shader.PropertyToID("_EnvgHeatHistory");
     private static readonly int HeatTemporalId = Shader.PropertyToID("_EnvgHeatTemporal");
 
@@ -312,11 +314,17 @@ internal static class EnvgChain
             _heatFlip = !_heatFlip;
             cb.SetGlobalTexture(MotionId, t.Motion);
             cb.SetGlobalTexture(HeatHistoryId, previous);
+            Ensure(ref _countA, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.RHalf, "Justachae ENVG heat, frames held A");
+            Ensure(ref _countB, t.HistoryB.width, t.HistoryB.height, RenderTextureFormat.RHalf, "Justachae ENVG heat, frames held B");
+            RenderTexture countThen = _heatFlip ? _countB! : _countA!, countNow = _heatFlip ? _countA! : _countB!;
+            cb.SetGlobalTexture(HeatCountId, countThen);
+            cb.SetGlobalVector(HistSizeId, new Vector4(1f / t.HistoryB.width, 1f / t.HistoryB.height, t.HistoryB.width, t.HistoryB.height));
             bool depthPrevOk = _depthPrevValid && _depthPrev != null && t.Depth != null && _depthPrev.width == t.Depth.width && _depthPrev.height == t.Depth.height;
             if (depthPrevOk)
                 cb.SetGlobalTexture(DepthPrevId, _depthPrev);
-            cb.SetGlobalVector(HeatTemporalId, new Vector4(_heatHistoryValid ? t.HeatTemporal : 0f, _heatHistoryValid && depthPrevOk ? SettledShare : 0f, 0f, 0f));
+            cb.SetGlobalVector(HeatTemporalId, new Vector4(_heatHistoryValid ? t.HeatTemporal : 0f, _heatHistoryValid && depthPrevOk ? 1f : 0f, 0f, 0f));
             cb.Blit(t.HistoryB, next, m, 36);
+            cb.Blit(t.HistoryB, countNow, m, 38);
             cb.Blit(next, t.HistoryB);
             _heatHistoryValid = true;
         }
