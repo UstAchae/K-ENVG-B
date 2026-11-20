@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.68.1";
+    public const string Version = "0.68.2";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -226,6 +226,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         EnvgProbe.Render();
     }
 
+    private static GUIStyle? _probeStyle;
     // TEMPORARY: the thermal lens's probe in the lower left
     private void OnGUI()
     {
@@ -235,7 +236,20 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         if (probe == null)
             return;
         float w = Screen.width * 0.28f, h = w * probe.height / probe.width;
-        GUI.DrawTexture(new Rect(12f, Screen.height - h - 12f, w, h), probe, ScaleMode.StretchToFill, false);
+        float x = 12f, y = Screen.height - h - 12f;
+        GUI.DrawTexture(new Rect(x, y, w, h), probe, ScaleMode.StretchToFill, false);
+        // its centre (the same direction as the screen's centre, from the lens)
+        Color was = GUI.color;
+        GUI.color = new Color(1f, 0.2f, 0.2f, 0.9f);
+        GUI.DrawTexture(new Rect(x + w * 0.5f - 12f, y + h * 0.5f - 1f, 24f, 2f), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(x + w * 0.5f - 1f, y + h * 0.5f - 12f, 2f, 24f), Texture2D.whiteTexture);
+        GUI.color = was;
+        // the lens against the camera, and what is drawn
+        Vector3 o = EnvgProbe.LensOffsetCm;
+        _probeStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold };
+        _probeStyle.normal.textColor = Color.white;
+        GUI.Label(new Rect(x + 6f, y + 4f, w, 24f), "thermal lens vs camera:  right " + o.x.ToString("F1") + " cm,  up " + o.y.ToString("F1") + " cm,  forward " + o.z.ToString("F1") + " cm", _probeStyle);
+        GUI.Label(new Rect(x + 6f, y + 24f, w, 24f), EnvgProbe.What.Length > 0 ? EnvgProbe.What : "no gun in hand", _probeStyle);
     }
 
     // every plugin's assembly is loaded by now: K-3PS-C's eyepieces, if it is there

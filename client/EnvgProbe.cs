@@ -17,9 +17,13 @@ internal static class EnvgProbe
     private static GameObject? _gun;
     private struct Part { public Renderer Renderer; public int Sub; public bool Glass; }
     private static readonly List<Part> _parts = new List<Part>();
-    private static bool _shown, _logged;
+    private static bool _shown;
+    private static int _glassParts;
 
     internal static Texture? Picture => _shown ? _picture : null;
+    // the lens's place against the camera's (its right, up, forward; cm) and what is drawn, for the label under the probe
+    internal static Vector3 LensOffsetCm;
+    internal static string What = "";
 
     internal static void SetShader(Shader shader)
     {
@@ -54,11 +58,12 @@ internal static class EnvgProbe
                     if (materials[sub] != null)
                         _parts.Add(new Part { Renderer = r, Sub = sub, Glass = materials[sub].renderQueue > 2500 });
             }
-            if (!_logged)
-            {
-                _logged = true;
-                EnvgFusionPlugin.Log?.LogInfo("ENVG probe (temporary): the gun " + gun.name + " from the thermal lens, " + _parts.Count + " parts, lower left");
-            }
+            _glassParts = 0;
+            foreach (Part part in _parts)
+                if (part.Glass)
+                    _glassParts++;
+            What = gun.name.Replace("(Clone)", "") + "  " + (_parts.Count - _glassParts) + " parts, " + _glassParts + " glass";
+            EnvgFusionPlugin.Log?.LogInfo("ENVG probe (temporary): " + gun.name + " from the thermal lens, " + (_parts.Count - _glassParts) + " solid parts, " + _glassParts + " glass parts");
         }
         if (_scene == null)
         {
@@ -68,6 +73,8 @@ internal static class EnvgProbe
             _picture.Create();
         }
         Matrix4x4 view = main.worldToCameraMatrix * Matrix4x4.Translate(main.transform.position - lens.position);
+        Vector3 d = main.transform.InverseTransformVector(lens.position - main.transform.position) * 100f;
+        LensOffsetCm = d;
         Matrix4x4 projection = Matrix4x4.Perspective(main.fieldOfView, (float)Width / Height, 0.01f, 20f);
         _draw ??= new CommandBuffer { name = "Justachae ENVG probe" };
         _draw.Clear();
