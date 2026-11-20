@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.72.3";
+    public const string Version = "0.72.4";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -277,15 +277,19 @@ internal static class EnvgFusion
             _cropW = _cropH = 0;
             return new Vector4(0f, 0f, 1f, 1f);
         }
-        Vector4 f = _lastField;
+        // this frame's eyepiece where the eyepieces have claimed it already (they set it at the camera's pre-cull, before
+        // this): last frame's lagged a running wearer's bobbing eyepiece, and part of the rectangle fell outside the crop
+        Vector4 f = EyepieceLink.ClaimedNow && EyepieceLink.FieldInMainUv.z > 0f ? EyepieceLink.FieldInMainUv : _lastField;
         float aspect = Mathf.Max(f.w, 1e-3f), share = EnvgFusionPlugin.ThermalField?.Value ?? 1f;
         if (share <= 0f)
             return new Vector4(0f, 0f, 1f, 1f);
         float halfH = 0.52f * f.z * share + CropMargin, halfW = (0.68f * f.z * share + CropMargin) / aspect;
         int needW = Mathf.Min(fullWidth, Mathf.CeilToInt(2f * halfW * fullWidth)), needH = Mathf.Min(fullHeight, Mathf.CeilToInt(2f * halfH * fullHeight));
-        if (needW > _cropW || needW < _cropW * 0.85f || _cropW > fullWidth)
+        // the crop's size only grows (until the eyepieces let go): a new size makes every texture anew and the history
+        // starts over, which showed as a frame of raw bright lines each time the view's field changed (sprinting)
+        if (needW > _cropW || _cropW > fullWidth)
             _cropW = Mathf.Min(fullWidth, needW + 8);
-        if (needH > _cropH || needH < _cropH * 0.85f || _cropH > fullHeight)
+        if (needH > _cropH || _cropH > fullHeight)
             _cropH = Mathf.Min(fullHeight, needH + 8);
         int w = _cropW, h = _cropH;
         halfW = 0.5f * w / fullWidth;

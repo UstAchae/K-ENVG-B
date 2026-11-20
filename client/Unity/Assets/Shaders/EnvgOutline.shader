@@ -251,7 +251,7 @@ Shader "Justachae/ENVG/Outline"
     }
     // last frame's heat fetched sharply (Catmull-Rom, five taps): a plain bilinear fetch every frame, the view moving
     // by a fraction of a pixel, would soften the picture more with each frame it holds
-    float4 heatHistoryAt(float2 uv)
+    float4 sharpAt(sampler2D tex, float2 uv)
     {
         float2 size = _EnvgHistSize.zw;
         float2 p = uv * size;
@@ -265,13 +265,14 @@ Shader "Justachae/ENVG/Outline"
         float2 p12 = (p1 + w2 / w12) / size;
         float2 p0 = (p1 - 1.0) / size;
         float2 p3 = (p1 + 2.0) / size;
-        float4 r = tex2Dlod(_EnvgHeatHistory, float4(p12.x, p0.y, 0, 0)) * (w12.x * w0.y)
-                 + tex2Dlod(_EnvgHeatHistory, float4(p0.x, p12.y, 0, 0)) * (w0.x * w12.y)
-                 + tex2Dlod(_EnvgHeatHistory, float4(p12.x, p12.y, 0, 0)) * (w12.x * w12.y)
-                 + tex2Dlod(_EnvgHeatHistory, float4(p3.x, p12.y, 0, 0)) * (w3.x * w12.y)
-                 + tex2Dlod(_EnvgHeatHistory, float4(p12.x, p3.y, 0, 0)) * (w12.x * w3.y);
+        float4 r = tex2Dlod(tex, float4(p12.x, p0.y, 0, 0)) * (w12.x * w0.y)
+                 + tex2Dlod(tex, float4(p0.x, p12.y, 0, 0)) * (w0.x * w12.y)
+                 + tex2Dlod(tex, float4(p12.x, p12.y, 0, 0)) * (w12.x * w12.y)
+                 + tex2Dlod(tex, float4(p3.x, p12.y, 0, 0)) * (w3.x * w12.y)
+                 + tex2Dlod(tex, float4(p12.x, p3.y, 0, 0)) * (w12.x * w3.y);
         return r / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y);
     }
+    float4 heatHistoryAt(float2 uv) { return sharpAt(_EnvgHeatHistory, uv); }
 
     // A real change (a body's heat, a door opened on a warm room) is the history far outside this frame's own spread
     // around the point (its mean and spread over the 5 x 5, as TAA's variance test); then the frames start anew from this
@@ -1442,11 +1443,19 @@ Shader "Justachae/ENVG/Outline"
                 float2 previous = previousUv(i.uv);
                 if (_EnvgTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
                     return float4(c, c, c, 1);
-                float h = tex2D(_EnvgEdgeHistory, previous).r;
+                // (fetched sharply, as the heat's history: a bilinear fetch each frame, the view moving, flattened the
+                // lines' crests and fewer lines came through while turning)
+                float h = sharpAt(_EnvgEdgeHistory, previous).r;
                 // held strictly within this frame's neighbourhood, as TAA holds its history: with any slack the
                 // history crept up frame after frame inside foliage (every pixel near a strong one) and filled crowns
                 h = clamp(h, lo, hi);
-                float v = lerp(c, h, _EnvgTemporal.x);
+                // the history's share by how far the picture moved since last frame (the chain's pixels): whole while the
+                // view is still (the lines held steady), less as it moves and none from a pixel and a half a frame on.
+                // Each frame's history is fetched between pixels while the view moves, and however sharp the fetch, a
+                // line carried over many frames that way spreads and drops under the threshold: lines thinned while
+                // turning. Moving, the picture is the frame's own; the heat under it is already settled (pass 36).
+                float moved = length((previous - i.uv) * _EnvgHistSize.zw);
+                float v = lerp(c, h, _EnvgTemporal.x * saturate(1.0 - moved / 1.5));
                 return float4(v, v, v, 1);
             }
             ENDCG
@@ -1739,6 +1748,10 @@ Shader "Justachae/ENVG/Outline"
                         return c;
                     float n = tex2Dlod(_EnvgHeatCount, float4(previous, 0, 0)).r;
                     n = n >= 0.0 ? min(n, HeatFrames) : 0.0;   // (nothing valid there: none)
+                    // (fewer frames held while the picture moves: each is fetched between pixels, and many such
+                    // fetches soften it; still, all of them)
+                    float moved = length((previous - i.uv) * _EnvgHistSize.zw);
+                    n = min(n, lerp(HeatFrames, 3.0, saturate(moved / 1.5)));
                     float4 hh = heatHistoryAt(previous);
                     if (any(hh != hh))
                         return c;
