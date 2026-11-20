@@ -24,12 +24,12 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.68.0";
+    public const string Version = "0.68.1";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
     internal static ManualLogSource? Log;
-    internal static ConfigEntry<bool>? On, WhitePhosphor, Symbology;
+    internal static ConfigEntry<bool>? On, WhitePhosphor, Symbology, Probe;
     internal static ConfigEntry<float>? GrassAmount, ThermalField, Latency, MinSpread, GroundPatches, BodyHeat, ShapeNeedsHeat, Washout, Temporal, LineWidth, Brightness, Amount, TubeBrightness, Softness, Glow, Smoothing, LensOffset, AirTemperature, LightHeating, SkyCooling, I2Noise, HeatEdges, GeometryEdges, ResidualHeat, Declutter, LocalContrast;
     internal static ConfigEntry<float>? SensorResolution;
     internal static ConfigEntry<int>? RenderScale;
@@ -50,6 +50,8 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         Log = Logger;
         // ---- what to use: a few settings ----
         // the thermal channel works on its own whenever the ENVG-B is worn and flipped down; this is for testing only
+        Probe = Config.Bind(Advanced, "调试：热像物镜探针", true,
+            new ConfigDescription("临时：在屏幕左下角显示从热像物镜位置看到的手中枪械（灰色枪体、青色瞄具玻璃、铜色轮廓），用来核对热像物镜的视角。", null, new ConfigurationManagerAttributes { IsAdvanced = true }));
         On = Config.Bind(Advanced, "调试：不戴 ENVG-B 也开启", false,
             new ConfigDescription("测试用：打开后，不戴 ENVG-B 也在全屏叠加热像。正常使用不用打开：戴上 ENVG-B 并放下就会工作。", null, new ConfigurationManagerAttributes { IsAdvanced = true }));
         Show = Config.Bind(Section, "显示内容", ShowOutline,
@@ -218,7 +220,23 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         EnvgFusion.Update();
     }
 
-    private void LateUpdate() => EnvgFusion.SetWhitePhosphor();
+    private void LateUpdate()
+    {
+        EnvgFusion.SetWhitePhosphor();
+        EnvgProbe.Render();
+    }
+
+    // TEMPORARY: the thermal lens's probe in the lower left
+    private void OnGUI()
+    {
+        if (Event.current.type != EventType.Repaint)
+            return;
+        Texture? probe = EnvgProbe.Picture;
+        if (probe == null)
+            return;
+        float w = Screen.width * 0.28f, h = w * probe.height / probe.width;
+        GUI.DrawTexture(new Rect(12f, Screen.height - h - 12f, w, h), probe, ScaleMode.StretchToFill, false);
+    }
 
     // every plugin's assembly is loaded by now: K-3PS-C's eyepieces, if it is there
     private void Start() => EyepieceLink.Bind();
@@ -1060,6 +1078,8 @@ internal static class EnvgFusion
                     _i2Shader = shader;
                 else if (shader.name == "Justachae/ENVG/BodyMask" && shader.isSupported)
                     _bodyMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
+                else if (shader.name == "Justachae/ENVG/Probe")
+                    EnvgProbe.SetShader(shader);
                 else if (shader.name == "Justachae/ENVG/GlassMask" && shader.isSupported)
                     _glassMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
             }
