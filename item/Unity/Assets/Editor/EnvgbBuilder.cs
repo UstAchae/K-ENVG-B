@@ -145,7 +145,10 @@ public static class EnvgbBuilder {
 
   // Preview: the GPNVG-18's view angles, centred on this device's bounds in the root frame.
   var pivot=root.AddComponent<PreviewPivot>();
-  pivot.pivotPosition=b.center;pivot.pivotRotation=new Quaternion(0.0074694254f,0.98476535f,0.04375f,-0.16812912f);pivot.scale=Vector3.one;
+  // The GPNVG-18's framing exactly (the user likes its icon angle): its pivot and LOD reference point, not the bounds'
+  // centre (the battery on the back pulled that far behind the goggle and shrank it in the icon).
+  pivot.pivotPosition=new Vector3(-0.00038808584f,-0.013348266f,-0.08924666f);lodGroup.localReferencePoint=new Vector3(-0.00038808584f,-0.013348244f,-0.089246705f);
+  pivot.pivotRotation=new Quaternion(0.0074694254f,0.98476535f,0.04375f,-0.16812912f);pivot.scale=Vector3.one;
   pivot.Icon=new PreviewPivot.IconSettings{rotation=new Quaternion(-0.049385615f,-0.94817758f,-0.25407037f,0.1843058f),boundsScale=1.8080130f,perspective=15,orthographicSize=10};
 
   string prefab=gen+"/"+name+".prefab";PrefabUtility.SaveAsPrefabAsset(root,prefab);UnityEngine.Object.DestroyImmediate(root);
