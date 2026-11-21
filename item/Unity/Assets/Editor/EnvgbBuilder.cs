@@ -150,6 +150,8 @@ public static class EnvgbBuilder {
   pivot.pivotPosition=new Vector3(-0.00038808584f,-0.013348266f,-0.08924666f);lodGroup.localReferencePoint=new Vector3(-0.00038808584f,-0.013348244f,-0.089246705f);
   pivot.pivotRotation=new Quaternion(0.0074694254f,0.98476535f,0.04375f,-0.16812912f);pivot.scale=Vector3.one;
   pivot.Icon=new PreviewPivot.IconSettings{rotation=new Quaternion(-0.049385615f,-0.94817758f,-0.25407037f,0.1843058f),boundsScale=1.8080130f,perspective=15,orthographicSize=10};
+  // framed on the goggle itself (the battery behind it moved it off centre and cut it): see IconFraming
+  pivot.Icon=IconFraming.Frame(root,pivot.Icon,r=>r.name.StartsWith("nvg_envgb_psq42_LOD0")||r.name.StartsWith("envgb_pod_")||r.name.StartsWith("nvg_envgb_psq42_glass"),2f);
 
   string prefab=gen+"/"+name+".prefab";PrefabUtility.SaveAsPrefabAsset(root,prefab);UnityEngine.Object.DestroyImmediate(root);
   return new AssetBundleBuild{assetBundleName=BundleKey(colour),assetNames=new[]{prefab}};
