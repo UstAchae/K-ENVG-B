@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.72.7";
+    public const string Version = "0.72.8";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -177,6 +177,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
                 EnvgPods.Toggle(true);
         }
         EnvgPods.Update(EnvgFusion.Wearer, EnvgFusion.WornDevice);
+        EnvgProbe.Update();
         // ← →: the device's modes (not while a menu, the inventory or the map has the cursor)
         if (EnvgFusion.Active && Show != null && !Cursor.visible)
         {
@@ -490,7 +491,7 @@ internal static class EnvgFusion
     private static readonly int CamToWorldId = Shader.PropertyToID("_EnvgCamToWorld");
     private static readonly int TanId = Shader.PropertyToID("_EnvgTan");
 
-    internal static bool Active => EnvgFusionPlugin.On?.Value == true || EnvgbDown;
+    internal static bool Active => (EnvgFusionPlugin.On?.Value == true || EnvgbDown) && !EnvgProbe.ThermalOff;
 
     // ---- the device: the ENVG-B (either colour) on the local player's head, flipped down ----
     private static readonly string[] EnvgbIds = { "6a3e9e4b0000000000000001", "6a3e9e4b0000000000000002" };
@@ -1200,7 +1201,9 @@ internal static class EnvgFusion
         }
         try
         {
+            long probeFrom = EnvgProbe.Now;
             RenderThermal(_main);
+            EnvgProbe.AddThermal(probeFrom);
         }
         catch (System.Exception e)
         {
