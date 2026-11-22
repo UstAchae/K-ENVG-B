@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.2";
+    public const string Version = "0.73.3";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1599,9 +1599,6 @@ internal static class EnvgFusion
     private const float LensNear = 0.03f;    // the goggle's own housing around the window left out
     private static Camera? _lensCam;
     private static RenderTexture? _lensTarget;
-    private static Transform? _lensNode;
-    private static EFT.InventoryLogic.Item? _lensItem;
-    private static float _lensSearchAt = -10f;
     private static int _lensJitter;
     private static bool _loggedLens, _loggedLensGrass;
     private static int _loggedLensSearch; private static bool _loggedLensFound;
@@ -1634,7 +1631,6 @@ internal static class EnvgFusion
             EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens camera: the objective marker envgb_thermal_lens " + (t == null ? "not found on the wearer" : "is more than 0.5 m from the eye"));
         return null;
     }
-    private static readonly List<Transform> _lensQueue = new List<Transform>();
 
     // the lens camera placed for this frame: its projection the crop of the main camera's unjittered field with our
     // jitter (drawn) and without (unjittered); null if it can't be made
@@ -1800,8 +1796,6 @@ internal static class EnvgFusion
     private static readonly List<GlassPart> _glass = new List<GlassPart>(), _housing = new List<GlassPart>();
     private static GameObject? _glassGun;
     internal static bool GlassDirty = true;
-    private static readonly int GlassDepthId = Shader.PropertyToID("_EnvgGlassDepth");
-    private static readonly RenderTargetIdentifier[] _glassTargets = new RenderTargetIdentifier[5];
     private static int _loggedGlass = -1;
     private static readonly List<Renderer> _sightRenderers = new List<Renderer>();
     private static readonly HashSet<string> _loggedSights = new HashSet<string>();
@@ -1902,7 +1896,6 @@ internal static class EnvgFusion
                 + "; " + (_housing.Count - housingBefore) + " housing part(s): " + housingNames + "; " + lowLod + " lower-detail renderer(s), " + lensFaces + " opaque lens face(s) left out");
     }
 
-    private static readonly int GlassBehindId = Shader.PropertyToID("_FpanoGlassBehind");
     private static RenderTexture? _holeMask;
     private static void DrawGlass(CommandBuffer cb, RenderTexture depth, Vector2 jitter)
     {
@@ -2001,7 +1994,7 @@ internal static class EnvgFusion
             // the gun's own parts beyond the sight do not (user: "瞄具区域里面能看到枪自己的热融合")
             float sightFar = p.Sight < _sightFar.Count ? _sightFar[p.Sight] : 0f;
             cb.SetGlobalFloat(SightFarId, sightFar > 0f ? sightFar + 0.01f : 0f);
-            cb.DrawRenderer(p.Renderer, _glassMaterial, p.Sub, 2);
+            cb.DrawRenderer(p.Renderer, _glassMaterial, p.Sub, 0);
             drawn++;
         }
         if (targets)
@@ -2047,8 +2040,6 @@ internal static class EnvgFusion
             Object.Destroy(_lensTarget);
         }
         _lensTarget = null;
-        _lensNode = null;
-        _lensItem = null;
     }
 
     private static void CopyMain(Camera source, Camera main, RenderTexture picture, RenderTexture normals, RenderTexture depth, RenderTexture albedo, RenderTexture specular, Vector2 jitter)
