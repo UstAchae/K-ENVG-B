@@ -2,6 +2,10 @@
 
 Justachae's ENVG-B (AN/PSQ-42) for SPT 4.1.6: a helmet night vision item with thermal outline and thermal fusion (white hot / black hot), switched with the arrow keys.
 
+## 0.73.3 beta 1：测试版
+
+This is a test version: the mod is still being tested in game, and things may change or break. Please report what looks wrong.
+
 - `item/`: model pipeline and Unity bundle build
 - `server/`: SPT server mod (item template, trader)
 - `client/`: BepInEx plugin (thermal outline and fusion)
