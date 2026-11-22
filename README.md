@@ -70,11 +70,11 @@ F12 里「目镜显示信息」可以关掉这些。
 
 ## 模型来源
 
-- **ENVG-B（AN/PSQ-42）和眼罩**：CGTrader 上购买的 AN/PSQ-42 Night Vision Goggles 模型：https://www.cgtrader.com/3d-models/military/other/an-psq-42-night-vision-goggles
+- **ENVG-B（AN/PSQ-42）和眼罩**：CGTrader 上 durchacht（https://www.cgtrader.com/designers/durchacht）制作的 AN/PSQ-42 Night Vision Goggles 模型：https://www.cgtrader.com/3d-models/military/other/an-psq-42-night-vision-goggles
 
-模型按其授权用于免费模组，只以游戏资源包的形式发布，不包含原始模型文件。感谢模型作者。
+模型按其授权用于免费模组，只以游戏资源包的形式发布，不包含原始模型文件。感谢模型作者 durchacht。
 
-Model: AN/PSQ-42 Night Vision Goggles from CGTrader (link above). Used for a free mod, shipped only as game bundles; the source model is not included.
+Model: AN/PSQ-42 Night Vision Goggles by durchacht on CGTrader (links above). Used for a free mod, shipped only as game bundles; the source model is not included.
 
 ## 安装
 
