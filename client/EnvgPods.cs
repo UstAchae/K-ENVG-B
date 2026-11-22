@@ -76,12 +76,13 @@ internal static class EnvgPods
             _cupL = _cupR = null;
             _lookFrames = LookFor;
         }
-        if ((_podL is not null && _podL == null) || (_podR is not null && _podR == null))
+        if ((_podL is not null && _podL == null) || (_podR is not null && _podR == null) || (_lens is not null && _lens == null))
         {
             _podL = _podR = null;
+            _lens = null;
             _lookFrames = LookFor;
         }
-        bool missing = _podL == null || _podR == null || (cup != null && (_cupL == null || _cupR == null));
+        bool missing = _podL == null || _podR == null || _lens == null || (cup != null && (_cupL == null || _cupR == null));
         if (missing && _lookFrames > 0)
         {
             _lookFrames--;
@@ -95,6 +96,10 @@ internal static class EnvgPods
         if (_cupR != null) _cupR.localRotation = right;
     }
 
+    // the thermal objective's marker on the worn device (the lens camera stands there)
+    private static Transform? _lens;
+    internal static Transform? Lens => _lens;
+
     // the device's and the eyecup's pod nodes on the wearer
     private static readonly List<Transform> _found = new List<Transform>();
     private static void Look(Transform wearer)
@@ -105,6 +110,7 @@ internal static class EnvgPods
             switch (t.name)
             {
                 case "envgb_pod_L": _podL = t; break;
+                case "envgb_thermal_lens": _lens = t; break;
                 case "envgb_pod_R": _podR = t; break;
                 case "envgb_eyecup_pod_L": _cupL = t; break;
                 case "envgb_eyecup_pod_R": _cupR = t; break;

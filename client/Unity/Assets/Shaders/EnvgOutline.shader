@@ -48,6 +48,10 @@ Shader "Justachae/ENVG/Outline"
     float2 toScreen(float2 cuv) { float4 c = cropOf(_EnvgCrop); return c.xy + cuv * c.zw; }
     float2 toChain(float2 suv) { float4 c = cropOf(_EnvgCrop); return (suv - c.xy) / c.zw; }
     float2 toChainPrev(float2 suv) { float4 c = cropOf(_EnvgCropPrev); return (suv - c.xy) / c.zw; }
+    // where the copies read their source: the main camera's frame through the crop (all 0), or the lens camera's own
+    // picture, which is the crop already (0, 0, 1, 1)
+    float4 _EnvgSrcCrop;
+    float2 toSource(float2 cuv) { return _EnvgSrcCrop.z > 0.0 ? _EnvgSrcCrop.xy + cuv * _EnvgSrcCrop.zw : toScreen(cuv); }
 
     float4 fragCopy(v2f i) : SV_Target
     {
@@ -232,6 +236,12 @@ Shader "Justachae/ENVG/Outline"
         float d = tex2Dlod(_EnvgDepth, float4(cuv, 0, 0)).r;
         return d > 0.0 && d < NearHeld;
     }
+    // what was at a point last frame was the gun or the hands: a place the gun has just left (its history is the gun's)
+    bool nearThen(float2 previous)
+    {
+        float d = tex2Dlod(_EnvgDepthPrev, float4(previous, 0, 0)).r;
+        return _EnvgHeatTemporal.y > 0.0 && d > 0.0 && d < NearHeld;
+    }
     bool sameSurfaceThen(float2 previous, float predicted)
     {
         if (predicted <= 0.0 || _EnvgHeatTemporal.y <= 0.0)
@@ -347,12 +357,26 @@ Shader "Justachae/ENVG/Outline"
     // show no thermal picture at all. tuv: the thermal textures' uv.
     // a magnified scope's lens (its picture, the reticle's area): no thermal picture there; screen uv
     sampler2D _EnvgLensMask;
+    float4 _EnvgLensMask_TexelSize;
     float4 _EnvgLensMaskOn;   // x: 1 when drawn this frame, yz: this frame's sub-pixel offset (uv)
     float scopeLens(float2 uv)
     {
         if (_EnvgLensMaskOn.x < 0.5)
             return 0.0;
-        return saturate(tex2D(_EnvgLensMask, uv + _EnvgLensMaskOn.yz).r);
+        // (w 1: drawn by the lens camera, in the thermal picture's own uv)
+        float2 at = _EnvgLensMaskOn.w > 0.5 ? toChain(uv) : uv;
+        at += _EnvgLensMaskOn.yz;
+        if (_EnvgLensMaskOn.w < 0.5)
+            return saturate(tex2D(_EnvgLensMask, at).r);
+        // the sights' hole a mask pixel wider all round: its edge moves by up to one with the lens camera's sub-pixel
+        // offset and is softened when read, which left a seam of thermal picture around it (user: "扣掉的区域周围漏缝")
+        float2 t = _EnvgLensMask_TexelSize.xy;
+        float m = tex2D(_EnvgLensMask, at).r;
+        m = max(m, max(tex2D(_EnvgLensMask, at + float2(t.x, 0)).r, tex2D(_EnvgLensMask, at - float2(t.x, 0)).r));
+        m = max(m, max(tex2D(_EnvgLensMask, at + float2(0, t.y)).r, tex2D(_EnvgLensMask, at - float2(0, t.y)).r));
+        m = max(m, max(tex2D(_EnvgLensMask, at + t).r, tex2D(_EnvgLensMask, at - t).r));
+        m = max(m, max(tex2D(_EnvgLensMask, at + float2(t.x, -t.y)).r, tex2D(_EnvgLensMask, at - float2(t.x, -t.y)).r));
+        return saturate(m);
     }
 
     float beyondLens(float2 tuv)
@@ -707,7 +731,7 @@ Shader "Justachae/ENVG/Outline"
                 [unroll] for (int y = 0; y < 4; y++)
                     [unroll] for (int x = 0; x < 4; x++)
                     {
-                        float v = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, toScreen(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy));
+                        float v = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, toSource(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy));
                         s[y * 4 + x] = v;
                         sd += v;
                         sx += v * (x - 1.5);
@@ -1349,7 +1373,7 @@ Shader "Justachae/ENVG/Outline"
                 float4 sum = 0;
                 [unroll] for (int y = 0; y < 4; y++)
                     [unroll] for (int x = 0; x < 4; x++)
-                        sum += tex2D(_MainTex, toScreen(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy);
+                        sum += tex2D(_MainTex, toSource(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy);
                 return sum / 16.0;
             }
             ENDCG
@@ -1441,7 +1465,8 @@ Shader "Justachae/ENVG/Outline"
                     }
                 }
                 float2 previous = previousUv(i.uv);
-                if (_EnvgTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0))
+                // (the gun and the hands: this frame's own lines, as their heat)
+                if (_EnvgTemporal.x <= 0.0 || any(previous < 0.0) || any(previous > 1.0) || nearHeld(i.uv) || nearThen(previous))
                     return float4(c, c, c, 1);
                 // (fetched sharply, as the heat's history: a bilinear fetch each frame, the view moving, flattened the
                 // lines' crests and fewer lines came through while turning)
@@ -1580,7 +1605,7 @@ Shader "Justachae/ENVG/Outline"
                 float c = 0;
                 [unroll] for (int y = 0; y < 4; y++)
                     [unroll] for (int x = 0; x < 4; x++)
-                        c += tex2D(_MainTex, toScreen(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy).r > -50.0 ? 1.0 : 0.0;
+                        c += tex2D(_MainTex, toSource(i.uv) + _EnvgJitter.xy + (float2(x, y) - 1.5) * 0.25 * _EnvgFootprint.xy).r > -50.0 ? 1.0 : 0.0;
                 c /= 16.0;
                 return float4(c, c, c, 1);
             }
@@ -1735,13 +1760,12 @@ Shader "Justachae/ENVG/Outline"
                 // another sub-pixel, change a little every frame though nothing moved; only many frames together are
                 // steady. On the same surface the frames are averaged (see sameSurfaceThen); elsewhere (people,
                 // something that came into view) last frame's heat is held to this frame's neighbourhood, as before.
-                // the gun and the hands go with the camera: last frame's heat at the same place on the screen, held
-                // to this frame's neighbourhood (not followed as the still world: that drew their ghosts)
-                if (nearHeld(i.uv))
-                {
-                    float2 same = toChainPrev(toScreen(i.uv));
-                    return lerp(c, clamp(tex2D(_EnvgHeatHistory, same), lo, hi), _EnvgHeatTemporal.x);
-                }
+                // the gun and the hands: this frame's own heat. They sway on their own against the camera, and no
+                // history of them (followed as the still world, or held at the same place) stays with them: it trailed
+                // a ghost of the gun behind it while it swung (the user's video, ENVG 0.2.52)
+                // (and where the gun was last frame: what it uncovers starts anew, no trail of it left behind)
+                if (nearHeld(i.uv) || nearThen(previous))
+                    return c;
                 if (sameSurfaceThen(previous, predicted))
                 {
                     if (!historyHolds(i.uv, previous))

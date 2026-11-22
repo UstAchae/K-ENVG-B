@@ -24,12 +24,12 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.72.10";
+    public const string Version = "0.73.0";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
     internal static ManualLogSource? Log;
-    internal static ConfigEntry<bool>? On, WhitePhosphor, Symbology;
+    internal static ConfigEntry<bool>? On, WhitePhosphor, Symbology, FromLens;
     internal static ConfigEntry<float>? GrassAmount, ThermalField, Latency, MinSpread, GroundPatches, BodyHeat, ShapeNeedsHeat, Washout, Temporal, LineWidth, Brightness, Amount, TubeBrightness, Softness, Glow, Smoothing, AirTemperature, LightHeating, SkyCooling, I2Noise, HeatEdges, GeometryEdges, ResidualHeat, Declutter, LocalContrast;
     internal static ConfigEntry<float>? SensorResolution;
     internal static ConfigEntry<int>? RenderScale;
@@ -50,6 +50,8 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         Log = Logger;
         // ---- what to use: a few settings ----
         // the thermal channel works on its own whenever the ENVG-B is worn and flipped down; this is for testing only
+        FromLens = Config.Bind(Advanced, "热像从物镜位置拍（真实画法）", true,
+            new ConfigDescription("开：热像由热像物镜位置的一台摄像机拍（物镜比眼睛高，近处的枪和瞄具挡住的地方偏下，瞄具倍率不放大热像）。关：热像取自眼睛这台摄像机的画面。", null, new ConfigurationManagerAttributes { IsAdvanced = true }));
         On = Config.Bind(Advanced, "调试：不戴 ENVG-B 也开启", false,
             new ConfigDescription("测试用：打开后，不戴 ENVG-B 也在全屏叠加热像。正常使用不用打开：戴上 ENVG-B 并放下就会工作。", null, new ConfigurationManagerAttributes { IsAdvanced = true }));
         Show = Config.Bind(Section, "显示内容", ShowOutline,
@@ -135,6 +137,8 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         I2Noise = Config.Bind(Advanced, "夜视噪点", 0f,
             new ConfigDescription("白磷夜视的散粒噪声。0 是没有。", new AcceptableValueRange<float>(0f, 3f), advanced));
         Camera.onPreRender += EnvgFusion.OnPreRender;
+        CollimatorSight.OnCollimatorEnabled += EnvgFusion.SightEnabled;
+        CollimatorSight.OnCollimatorDisabled += EnvgFusion.SightDisabled;
         var harmony = new Harmony(Guid);
         MethodInfo? final = AccessTools.Method(typeof(SSAAImpl), "OnRenderImage");
         if (final != null)
@@ -253,6 +257,7 @@ internal static class EnvgFusion
     private static bool _loggedMain;
     private static readonly int JitterId = Shader.PropertyToID("_EnvgJitter");
     private static readonly int FootprintId = Shader.PropertyToID("_EnvgFootprint");
+    private static readonly int SrcCropId = Shader.PropertyToID("_EnvgSrcCrop");
     private static readonly int CropId = Shader.PropertyToID("_EnvgCrop"), CropPrevId = Shader.PropertyToID("_EnvgCropPrev");
 
     // The part of the screen the thermal picture is worked out for. Over the screen, all of it. In K-3PS-C's
@@ -923,13 +928,14 @@ internal static class EnvgFusion
     {
         if (_main == null || !GrassMaskWanted)
             return;
-        if (_grassMaskCb == null || _grassMaskCamera != _main)
+        Camera into = _lensCam != null && LensWanted ? _lensCam : _main;
+        if (_grassMaskCb == null || _grassMaskCamera != into)
         {
             if (_grassMaskCb != null && _grassMaskCamera != null)
                 _grassMaskCamera.RemoveCommandBuffer(CameraEvent.AfterGBuffer, _grassMaskCb);
             _grassMaskCb ??= new CommandBuffer { name = "Justachae ENVG grass mask" };
-            _main.AddCommandBuffer(CameraEvent.AfterGBuffer, _grassMaskCb);
-            _grassMaskCamera = _main;
+            into.AddCommandBuffer(CameraEvent.AfterGBuffer, _grassMaskCb);
+            _grassMaskCamera = into;
         }
         if (_grassMaskFrame != Time.frameCount)
         {
@@ -982,7 +988,7 @@ internal static class EnvgFusion
 
     // at the end of the recording (the main camera's pre-render): the mask down to the sensor's pixels; or, with no
     // grass this frame or no use for it, an empty mask
-    private static void FinishGrassMask(Vector2 jitter)
+    private static void FinishGrassMask(Vector2 jitter, bool lens)
     {
         if (GrassMask == null || Material == null)
             return;
@@ -998,8 +1004,10 @@ internal static class EnvgFusion
             return;
         }
         _grassMaskCb.SetGlobalVector(JitterId, new Vector4(jitter.x, jitter.y, 0f, 0f));
-        _grassMaskCb.SetGlobalVector(FootprintId, new Vector4(_crop.z / GrassMask.width, _crop.w / GrassMask.height, 0f, 0f));
+        _grassMaskCb.SetGlobalVector(SrcCropId, lens ? new Vector4(0f, 0f, 1f, 1f) : Vector4.zero);
+        _grassMaskCb.SetGlobalVector(FootprintId, lens ? new Vector4(1f / GrassMask.width, 1f / GrassMask.height, 0f, 0f) : new Vector4(_crop.z / GrassMask.width, _crop.w / GrassMask.height, 0f, 0f));
         _grassMaskCb.Blit(GrassScreenId, GrassMask, Material, 32);
+        _grassMaskCb.SetGlobalVector(SrcCropId, Vector4.zero);
         _grassMaskCb.ReleaseTemporaryRT(GrassScreenId);
     }
 
@@ -1010,6 +1018,7 @@ internal static class EnvgFusion
         {
             try
             {
+                DrawInstancesForLens(maskList, instancingBounds, layerMask);
                 RecordGrassMask(maskList, layerMask);
             }
             catch (System.Exception e)
@@ -1087,6 +1096,8 @@ internal static class EnvgFusion
                     _lensMaskMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
                 else if (shader.name == "Justachae/ENVG/BodyMask" && shader.isSupported)
                     _bodyMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
+                else if (shader.name == "Justachae/ENVG/GlassSurface" && shader.isSupported)
+                    _glassShader = shader;
             }
         }
         if (_shader == null || !_shader.isSupported)
@@ -1119,10 +1130,12 @@ internal static class EnvgFusion
     {
         if (_mainCopy != null && _mainCopyCamera != null)
             _mainCopyCamera.RemoveCommandBuffer(CameraEvent.BeforeForwardAlpha, _mainCopy);
-        if (_motionCopy != null && _mainCopyCamera != null)
-            _mainCopyCamera.RemoveCommandBuffer(CameraEvent.BeforeImageEffects, _motionCopy);
+        if (_motionCopy != null && _motionCamera != null)
+            _motionCamera.RemoveCommandBuffer(CameraEvent.BeforeImageEffects, _motionCopy);
         _motionCopy?.Release();
         _motionCopy = null;
+        _motionCamera = null;
+        FreeLens();
         _motionReady = false;
         _mainCopy?.Release();
         _mainCopy = null;
@@ -1308,9 +1321,14 @@ internal static class EnvgFusion
         {
             Matrix4x4 unjittered = main.nonJitteredProjectionMatrix;
             Matrix4x4 drawn = main.projectionMatrix;
-            Matrix4x4 worldToCam = main.worldToCameraMatrix;
+            // the thermal lens's own camera (the real way), or the main camera's frame
+            Camera? lensCam = EnvgFusionPlugin.FromLens?.Value == true ? PlaceLens(main, unjittered, fineWidth, fineHeight, out drawn, out unjittered) : null;
+            Camera source = lensCam != null ? lensCam : main;
+            Matrix4x4 worldToCam = source.worldToCameraMatrix;
             _camToWorld = worldToCam.inverse;
-            _tan = new Vector2(1f / unjittered.m00, 1f / unjittered.m11);
+            // (the full field's slopes, the crop's rays through it: the lens camera's view is the crop of the same field)
+            Matrix4x4 full = main.nonJitteredProjectionMatrix;
+            _tan = new Vector2(1f / full.m00, 1f / full.m11);
             // the camera now and last frame, as the scene is copied (after anything that moved it before it renders):
             // the still world's history is followed by them (see the shader's previousUv)
             Shader.SetGlobalMatrix(RpCamToWorldId, _camToWorld);
@@ -1330,13 +1348,15 @@ internal static class EnvgFusion
             // the frame is drawn with a sub-pixel offset (temporal anti-aliasing): read it back from where it is, so
             // the copies stay put
             Vector2 jitter = new Vector2(drawn.m02 - unjittered.m02, drawn.m12 - unjittered.m12) * -0.5f;
-            CopyMain(main, picture, normals, depth, albedo, specular, jitter);
-            FinishGrassMask(jitter);
+            CopyMain(source, main, picture, normals, depth, albedo, specular, jitter);
+            FinishGrassMask(jitter, lensCam != null);
             CheckGrassMask();
+            if (lensCam != null)
+                RenderLens(lensCam);
             if (!_loggedMain)
             {
                 _loggedMain = true;
-                EnvgFusionPlugin.Log?.LogInfo("ENVG scene data from the main camera's own buffers (" + main.actualRenderingPath + ", jitter " + jitter.x.ToString("F5") + ", " + jitter.y.ToString("F5") + ")");
+                EnvgFusionPlugin.Log?.LogInfo("ENVG scene data from " + (lensCam != null ? "the thermal lens's own camera" : "the main camera's own buffers") + " (" + source.actualRenderingPath + ", jitter " + jitter.x.ToString("F5") + ", " + jitter.y.ToString("F5") + ")");
             }
         }
 
@@ -1535,7 +1555,7 @@ internal static class EnvgFusion
     private static RenderTexture? _lensMask;
     private static readonly int LensMaskId = Shader.PropertyToID("_EnvgLensMask"), LensMaskOnId = Shader.PropertyToID("_EnvgLensMaskOn");
     private static bool _loggedLensMask;
-    private static void DrawScopeLens(CommandBuffer cb, Camera main, Vector2 jitter)
+    private static void DrawScopeLens(CommandBuffer cb, Camera main, Vector2 jitter, bool lensCamera)
     {
         Renderer? lens = null;
         try { lens = EFT.CameraControl.CameraManager.Instance?.OpticCameraManager?.CurrentOpticSight?.LensRenderer; } catch (System.Exception) { }
@@ -1559,45 +1579,512 @@ internal static class EnvgFusion
         cb.ClearRenderTarget(false, true, Color.clear);
         cb.DrawRenderer(lens, _lensMaskMaterial, 0, 0);
         cb.SetGlobalTexture(LensMaskId, _lensMask);
-        Shader.SetGlobalVector(LensMaskOnId, new Vector4(1f, jitter.x, jitter.y, 0f));
+        Shader.SetGlobalVector(LensMaskOnId, new Vector4(1f, jitter.x, jitter.y, lensCamera ? 1f : 0f));
         if (!_loggedLensMask)
         {
             _loggedLensMask = true;
-            EnvgFusionPlugin.Log?.LogInfo("ENVG: a scope's lens (" + lens.name + ") left out of the thermal picture, its housing kept");
+            EnvgFusionPlugin.Log?.LogInfo("ENVG: a scope's lens (" + lens.name + ") left out of the thermal picture, its housing kept, as seen from " + (lensCamera ? "the thermal lens" : "the eye"));
         }
     }
 
-    private static void CopyMain(Camera main, RenderTexture picture, RenderTexture normals, RenderTexture depth, RenderTexture albedo, RenderTexture specular, Vector2 jitter)
+    // ---- the thermal lens's own camera (the real way): the scene drawn once more from the thermal objective, which sits
+    // above and beside the eye, turned as the eye's view (the two are aligned at a distance), over the crop of the same
+    // field the thermal picture fills. Near things show where the lens sees them: the gun and a scope lower than to the
+    // eye, so through a scope the thermal picture is still there, and never magnified by it (the scope's own picture is
+    // another camera's). Its deferred buffers are copied as the main camera's were. Rendered by hand in the main
+    // camera's pre-render, after its place for this frame is set; a sub-pixel jitter of its own (Halton 2, 3 over 8
+    // frames) for the heat's history to gather. The game's instanced grass and trees are drawn for it too
+    // (DrawInstancesForLens); shadows only for the physical model (the game's method reads the colour alone). ----
+    private const int LensSupersample = 2;   // the lens camera's pixels per thermal processing pixel, each way
+    private const float LensNear = 0.03f;    // the goggle's own housing around the window left out
+    private static Camera? _lensCam;
+    private static RenderTexture? _lensTarget;
+    private static Transform? _lensNode;
+    private static EFT.InventoryLogic.Item? _lensItem;
+    private static float _lensSearchAt = -10f;
+    private static int _lensJitter;
+    private static bool _loggedLens, _loggedLensGrass;
+    private static int _loggedLensSearch; private static bool _loggedLensFound;
+    private static Camera? _motionCamera;
+    private static int _lensGrassDraws;
+    internal static bool LensWanted => EnvgFusionPlugin.FromLens?.Value == true;
+
+    private static float Halton(int index, int b)
     {
-        if (_mainCopy == null || _mainCopyCamera != main)
+        float f = 1f, r = 0f;
+        for (int i = index; i > 0; i /= b)
+        {
+            f /= b;
+            r += f * (i % b);
+        }
+        return r;
+    }
+
+    // the window of the thermal objective on the worn goggle (found again only when the goggle changes, at most once a
+    // second while it is not found)
+    // the objective's marker on the worn device (envgb_thermal_lens, found with the pods: EnvgPods), within half a metre
+    // of the eye
+    private static Transform? LensNode()
+    {
+        Transform? t = EnvgPods.Lens;
+        if (t != null && _main != null && (t.position - _main.transform.position).sqrMagnitude < 0.25f)
+            return t;
+        if (_loggedLensSearch++ < 3)
+            EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens camera: the objective marker envgb_thermal_lens " + (t == null ? "not found on the wearer" : "is more than 0.5 m from the eye"));
+        return null;
+    }
+    private static readonly List<Transform> _lensQueue = new List<Transform>();
+
+    // the lens camera placed for this frame: its projection the crop of the main camera's unjittered field with our
+    // jitter (drawn) and without (unjittered); null if it can't be made
+    private static Camera? PlaceLens(Camera main, Matrix4x4 full, int width, int height, out Matrix4x4 drawn, out Matrix4x4 unjittered)
+    {
+        drawn = unjittered = full;
+        if (_lensCam == null)
+        {
+            var go = new GameObject("Justachae ENVG thermal lens camera");
+            Object.DontDestroyOnLoad(go);
+            _lensCam = go.AddComponent<Camera>();
+            _lensCam.CopyFrom(main);
+            _lensCam.enabled = false;
+            _lensCam.renderingPath = RenderingPath.DeferredShading;
+            _lensCam.allowHDR = true;
+            _lensCam.allowMSAA = false;
+            _lensCam.depthTextureMode = DepthTextureMode.Depth;
+        }
+        int w = Mathf.Max(width * LensSupersample, 16), h = Mathf.Max(height * LensSupersample, 16);
+        if (_lensTarget == null || _lensTarget.width != w || _lensTarget.height != h)
+        {
+            if (_lensTarget != null)
+            {
+                _lensTarget.Release();
+                Object.Destroy(_lensTarget);
+            }
+            _lensTarget = new RenderTexture(w, h, 24, RenderTextureFormat.ARGBHalf) { name = "Justachae ENVG thermal lens", filterMode = FilterMode.Bilinear };
+            _lensTarget.Create();
+        }
+        Camera cam = _lensCam;
+        cam.targetTexture = _lensTarget;
+        // (all of its picture: the main camera draws into part of its target, its SSAA input, and CopyFrom took that rect)
+        cam.rect = new Rect(0f, 0f, 1f, 1f);
+        cam.cullingMask = main.cullingMask;
+        cam.clearFlags = main.clearFlags;
+        cam.backgroundColor = main.backgroundColor;
+        cam.farClipPlane = main.farClipPlane;
+        cam.nearClipPlane = LensNear;
+        cam.useOcclusionCulling = main.useOcclusionCulling;
+        cam.layerCullDistances = main.layerCullDistances;
+        cam.layerCullSpherical = main.layerCullSpherical;
+        // its place: the objective's window on the goggle, else a little above the eye; turned as the eye's view
+        Transform eye = main.transform;
+        Transform? node = LensNode();
+        Vector3 at = node != null ? node.position : eye.position + eye.up * 0.04f;
+        cam.transform.SetPositionAndRotation(at, eye.rotation);
+        // the crop of the full field (uv x, y, w, h) as an off-centre projection
+        Vector4 c = _crop.z > 0f ? _crop : new Vector4(0f, 0f, 1f, 1f);
+        float ox = 2f * c.x + c.z - 1f, oy = 2f * c.y + c.w - 1f;
+        Matrix4x4 p = full;
+        p.m00 = full.m00 / c.z; p.m02 = (full.m02 + ox) / c.z;
+        p.m11 = full.m11 / c.w; p.m12 = (full.m12 + oy) / c.w;
+        unjittered = p;
+        // our jitter: half a thermal pixel either way
+        _lensJitter = (_lensJitter + 1) & 7;
+        float jx = (Halton(_lensJitter + 1, 2) - 0.5f) * LensSupersample, jy = (Halton(_lensJitter + 1, 3) - 0.5f) * LensSupersample;
+        p.m02 += 2f * jx / w;
+        p.m12 += 2f * jy / h;
+        drawn = p;
+        cam.projectionMatrix = p;
+        if (!_loggedLens || (node != null) != _loggedLensFound)
+        {
+            _loggedLens = true;
+            _loggedLensFound = node != null;
+            Vector3 off = eye.InverseTransformPoint(at);
+            EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens camera: " + (node != null ? "at the goggle's objective (" + node.name + ")" : "the objective not found, 4 cm above the eye")
+                + ", from the eye " + (off.x * 100f).ToString("F1") + " cm right, " + (off.y * 100f).ToString("F1") + " up, " + (off.z * 100f).ToString("F1") + " forward; "
+                + w + "x" + h + " over the crop " + c.x.ToString("F3") + "," + c.y.ToString("F3") + " " + c.z.ToString("F3") + "x" + c.w.ToString("F3"));
+        }
+        return cam;
+    }
+
+    private static void RenderLens(Camera cam)
+    {
+        bool shadows = EnvgFusionPlugin.HeatSource?.Value != EnvgFusionPlugin.SourceNative;
+        float keep = QualitySettings.shadowDistance;
+        if (!shadows)
+            QualitySettings.shadowDistance = 0f;
+        try
+        {
+            cam.Render();
+        }
+        catch (System.Exception e)
+        {
+            EnvgFusionPlugin.Log?.LogWarning("ENVG thermal lens camera: render failed: " + e.Message);
+        }
+        finally
+        {
+            if (!shadows)
+                QualitySettings.shadowDistance = keep;
+        }
+        if (!_loggedLensGrass && _lensGrassDraws > 0)
+        {
+            _loggedLensGrass = true;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens camera: " + _lensGrassDraws + " instanced draws (grass, trees) given to it as well; shadows " + (shadows ? "on" : "off (the game's method)"));
+        }
+    }
+
+    // the game's instanced vegetation is drawn for the main camera alone (GPU Instancer): the same instances, culled for
+    // the main camera's view (the lens camera's is a crop of it), drawn for the lens camera too
+    private static void DrawInstancesForLens(System.Collections.IList list, Bounds bounds, int layerMask)
+    {
+        if (_lensCam == null || !LensWanted)
+            return;
+        foreach (object entry in list)
+        {
+            if (entry is not GPUInstancer.GPUInstancerRuntimeData data || data.transformationMatrixVisibilityBuffer == null
+                || data.bufferSize == 0 || data.instanceCount == 0 || data.instanceLODs == null || data.argsBuffer == null)
+                continue;
+            foreach (GPUInstancer.GPUInstancerPrototypeLOD lod in data.instanceLODs)
+            {
+                if (lod?.renderers == null)
+                    continue;
+                foreach (GPUInstancer.GPUInstancerRenderer renderer in lod.renderers)
+                {
+                    if (renderer?.materials == null || renderer.mesh == null || (layerMask & (1 << renderer.layer)) == 0)
+                        continue;
+                    for (int m = 0; m < renderer.materials.Count; m++)
+                    {
+                        Material material = renderer.materials[m];
+                        if (material == null)
+                            continue;
+                        int sub = Mathf.Min(m, renderer.mesh.subMeshCount - 1);
+                        int offset = (renderer.argsBufferOffset + 5 * sub) * GPUInstancer.GPUInstancerConstants.STRIDE_SIZE_INT;
+                        Graphics.DrawMeshInstancedIndirect(renderer.mesh, sub, material, bounds, data.argsBuffer, offset, renderer.mpb,
+                            ShadowCastingMode.Off, true, renderer.layer, _lensCam);
+                        _lensGrassDraws++;
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- the sights' glass on the gun in the hands, as ENVG-B had it (0.64-0.68): long-wave infrared does not pass
+    // glass, so from the thermal lens each sight's glass is a surface about the air's warmth, drawn into the thermal
+    // copies (the game draws glass after the opaque scene, so it is not in them). A sight's glass is the see-through parts
+    // of its own model (its materials drawn after the opaque scene: its windows, its lenses), not the game's reticle quad
+    // (which turns to face the eye and, seen at a slant, covers only part of the window); a scope's lens renderer too.
+    // Its housing (the opaque parts) is drawn first, its depth only, so what stands in front of the glass as the lens
+    // sees it keeps it hidden. From each sight's own root (the node under the slot it is fitted in), leaving out what is
+    // fitted into slots of its own. Collected once per gun and again when something is put on a gun (Dirty) or one of
+    // them is gone ----
+    private struct GlassPart
+    {
+        public Renderer Renderer;
+        public int Sub;
+        public int Sight;   // which sight it belongs to (its own housing gives where that sight ends)
+    }
+    private static int _sightCount;
+    private static readonly List<float> _sightFar = new List<float>();
+    private static Material? _glassMaterial;
+    private static Shader? _glassShader;   // (from the bundle, with the others: EnsureMaterial)
+    private static bool _glassTried;
+    private static readonly List<GlassPart> _glass = new List<GlassPart>(), _housing = new List<GlassPart>();
+    private static GameObject? _glassGun;
+    internal static bool GlassDirty = true;
+    private static readonly int GlassDepthId = Shader.PropertyToID("_EnvgGlassDepth");
+    private static readonly RenderTargetIdentifier[] _glassTargets = new RenderTargetIdentifier[5];
+    private static int _loggedGlass = -1;
+    private static readonly List<Renderer> _sightRenderers = new List<Renderer>();
+    private static readonly HashSet<string> _loggedSights = new HashSet<string>();
+
+    private static bool IsSlot(Transform t) => t.name.StartsWith("mod_", System.StringComparison.OrdinalIgnoreCase);
+    private static readonly HashSet<CollimatorSight> _enabledSights = new HashSet<CollimatorSight>();
+    internal static void SightEnabled(CollimatorSight sight) { _enabledSights.Add(sight); GlassDirty = true; }
+    internal static void SightDisabled(CollimatorSight sight) { _enabledSights.Remove(sight); GlassDirty = true; }
+    private const float SightReach = 0.6f;   // a sight on the gun in the hands is within this of the lens
+
+    // one sight's glass and housing onto the lists (skip: the game's reticle quad; lens: a scope's lens, always glass)
+    private static readonly List<LODGroup> _lodGroups = new List<LODGroup>();
+    private static readonly HashSet<Renderer> _lowLod = new HashSet<Renderer>();
+    private static readonly int LensMaskTexelId = Shader.PropertyToID("_EnvgLensMask_TexelSize");
+    private static bool IsOptic(Renderer r, Material m)
+    {
+        string a = r.name, b = m.name;
+        return a.IndexOf("linza", System.StringComparison.OrdinalIgnoreCase) >= 0 || b.IndexOf("linza", System.StringComparison.OrdinalIgnoreCase) >= 0
+            || a.IndexOf("lens", System.StringComparison.OrdinalIgnoreCase) >= 0 || b.IndexOf("lens", System.StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+    private static readonly int SightFarId = Shader.PropertyToID("_FpanoSightFar");
+    private static int _holeCheck;
+    private static void CollectSight(Transform sight, Renderer? skip, Renderer? lens)
+    {
+        Transform root = sight;
+        for (int k = 0; k < 12 && root.parent != null && !IsSlot(root.parent); k++)
+            root = root.parent;
+        int glassBefore = _glass.Count, housingBefore = _housing.Count, lowLod = 0, lensFaces = 0;
+        var names = new System.Text.StringBuilder();
+        var housingNames = new System.Text.StringBuilder();
+        // the lower levels of detail are left out: drawn by hand they would all show at once, and a far level's window is
+        // often an opaque face (0.2.55: it stood as the sight's own housing across the whole window, and the hole was gone)
+        _lowLod.Clear();
+        root.GetComponentsInChildren(true, _lodGroups);
+        foreach (LODGroup g in _lodGroups)
+        {
+            if (g == null)
+                continue;
+            LOD[] lods = g.GetLODs();
+            for (int l = 1; l < lods.Length; l++)
+                foreach (Renderer lr in lods[l].renderers)
+                    if (lr != null)
+                        _lowLod.Add(lr);
+            if (lods.Length > 0)
+                foreach (Renderer lr in lods[0].renderers)
+                    if (lr != null)
+                        _lowLod.Remove(lr);
+        }
+        _lodGroups.Clear();
+        root.GetComponentsInChildren(true, _sightRenderers);
+        foreach (Renderer r in _sightRenderers)
+        {
+            if (r == null || r == skip || r is ParticleSystemRenderer || r is LineRenderer || r is TrailRenderer)
+                continue;
+            if (r != lens && _lowLod.Contains(r))
+            {
+                lowLod++;
+                continue;
+            }
+            bool inOtherSlot = false;
+            for (Transform? t = r.transform; t != null && t != root; t = t.parent)
+                if (IsSlot(t))
+                {
+                    inOtherSlot = true;
+                    break;
+                }
+            if (inOtherSlot)
+                continue;
+            Material[] materials = r.sharedMaterials;
+            for (int sub = 0; sub < materials.Length; sub++)
+            {
+                Material m = materials[sub];
+                if (m == null)
+                    continue;
+                // a lens surface drawn opaque (the EOTech's "backLens" [back_linza], a scope's lens faces) is optics, not
+                // a wall: as housing it filled the window and the hole was gone (0.2.56, in the log)
+                if (r != lens && m.renderQueue <= 2500 && IsOptic(r, m))
+                {
+                    lensFaces++;
+                    continue;
+                }
+                if (r != lens && m.renderQueue <= 2500)
+                {
+                    _housing.Add(new GlassPart { Renderer = r, Sub = sub, Sight = _sightCount });
+                    if (housingNames.Length < 600)
+                        housingNames.Append(r.name).Append(r.gameObject.activeInHierarchy && r.enabled ? "" : " (off)").Append(" [").Append(m.name).Append("] ");
+                    continue;
+                }
+                _glass.Add(new GlassPart { Renderer = r, Sub = sub, Sight = _sightCount });
+                if (names.Length < 300)
+                    names.Append(r.name).Append(" [").Append(m.name).Append("] ");
+            }
+        }
+        _sightRenderers.Clear();
+        _sightCount++;
+        if (_loggedSights.Add(root.name))
+            EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens: sight " + root.name + ": " + (_glass.Count > glassBefore ? (_glass.Count - glassBefore) + " glass part(s): " + names : "no glass found")
+                + "; " + (_housing.Count - housingBefore) + " housing part(s): " + housingNames + "; " + lowLod + " lower-detail renderer(s), " + lensFaces + " opaque lens face(s) left out");
+    }
+
+    private static readonly int GlassBehindId = Shader.PropertyToID("_FpanoGlassBehind");
+    private static RenderTexture? _holeMask;
+    private static void DrawGlass(CommandBuffer cb, RenderTexture depth, Vector2 jitter)
+    {
+        if (_glassMaterial == null && !_glassTried)
+        {
+            _glassTried = true;
+            Shader? shader = _glassShader;
+            if (shader != null && shader.isSupported)
+                _glassMaterial = new Material(shader) { hideFlags = HideFlags.DontSave };
+            else
+                EnvgFusionPlugin.Log?.LogWarning("ENVG: the glass shader is missing: no hole in the thermal picture through the sights");
+        }
+        if (_glassMaterial == null)
+        {
+            Shader.SetGlobalVector(LensMaskOnId, Vector4.zero);
+            return;
+        }
+        GameObject? gun = null;
+        try { gun = Wearer?.HandsController?.ControllerGameObject; } catch (System.Exception) { }
+        bool stale = GlassDirty || gun != _glassGun;
+        if (!stale)
+            foreach (GlassPart p in _glass)
+                if (p.Renderer == null) { stale = true; break; }
+        if (stale)
+        {
+            GlassDirty = false;
+            _glassGun = gun;
+            _glass.Clear();
+            _housing.Clear();
+            _sightCount = 0;
+            _holeCheck = 3;
+            // the red dots and holographic sights the game has enabled near the lens (the ones it shows), and a scope's lens
+            // (the one the game aims through); the gun's own if none of those
+            Vector3 lensAt = _lensCam != null ? _lensCam.transform.position : Vector3.zero;
+            foreach (CollimatorSight collimator in _enabledSights)
+                if (collimator != null && (collimator.transform.position - lensAt).sqrMagnitude < SightReach * SightReach)
+                    CollectSight(collimator.transform, collimator.CollimatorMeshRenderer, null);
+            OpticSight? aimed = null;
+            try { aimed = EFT.CameraControl.CameraManager.Instance?.OpticCameraManager?.CurrentOpticSight; } catch (System.Exception) { }
+            if (aimed != null && aimed.LensRenderer != null)
+                CollectSight(aimed.transform, null, aimed.LensRenderer);
+            if (_glass.Count == 0 && gun != null)
+            {
+                foreach (CollimatorSight collimator in gun.GetComponentsInChildren<CollimatorSight>(true))
+                    if (collimator != null)
+                        CollectSight(collimator.transform, collimator.CollimatorMeshRenderer, null);
+                foreach (OpticSight optic in gun.GetComponentsInChildren<OpticSight>(true))
+                    if (optic != null && optic.LensRenderer != null)
+                        CollectSight(optic.transform, null, optic.LensRenderer);
+            }
+        }
+        // where each sight ends as the lens sees it: the farthest corner of its own housing's boxes, along the lens's view
+        _sightFar.Clear();
+        for (int s = 0; s < _sightCount; s++)
+            _sightFar.Add(0f);
+        Transform? lensT = _lensCam != null ? _lensCam.transform : null;
+        if (lensT != null)
+            foreach (GlassPart h in _housing)
+            {
+                if (h.Renderer == null || !h.Renderer.gameObject.activeInHierarchy || !h.Renderer.enabled || h.Sight >= _sightFar.Count)
+                    continue;
+                Bounds b = h.Renderer.bounds;
+                Vector3 c = b.center - lensT.position, e = b.extents, f = lensT.forward;
+                float far = Vector3.Dot(c, f) + Mathf.Abs(e.x * f.x) + Mathf.Abs(e.y * f.y) + Mathf.Abs(e.z * f.z);
+                if (far > _sightFar[h.Sight])
+                    _sightFar[h.Sight] = far;
+            }
+        int drawn = 0;
+        bool targets = false;
+        foreach (GlassPart p in _glass)
+        {
+            if (p.Renderer == null || !p.Renderer.gameObject.activeInHierarchy)
+                continue;
+            if (!targets)
+            {
+                targets = true;
+                // (at the lens camera's own size: its depth buffer is drawn against, and the edge stays sharp)
+                int mw = _lensTarget != null ? _lensTarget.width : depth.width, mh = _lensTarget != null ? _lensTarget.height : depth.height;
+                if (_holeMask == null || _holeMask.width != mw || _holeMask.height != mh)
+                {
+                    if (_holeMask != null)
+                    {
+                        _holeMask.Release();
+                        Object.Destroy(_holeMask);
+                    }
+                    _holeMask = new RenderTexture(mw, mh, 0, RenderTextureFormat.R8) { name = "Justachae ENVG sights' hole", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+                    _holeMask.Create();
+                }
+                // over the lens camera's own depth buffer (this runs while it renders, before its transparent things:
+                // the glass is not in it, everything opaque is), as 0.2.52 had it (user: "这回对了")
+                cb.SetRenderTarget(_holeMask, BuiltinRenderTextureType.CameraTarget);
+                cb.ClearRenderTarget(false, true, Color.clear);
+            }
+            // each glass pushed on along its rays to 1 cm past its own sight's far end (at least 2 cm): the hole where the
+            // line leaves the sight with nothing opaque in between; its hood's or tube's inside keeps the thermal picture,
+            // the gun's own parts beyond the sight do not (user: "瞄具区域里面能看到枪自己的热融合")
+            float sightFar = p.Sight < _sightFar.Count ? _sightFar[p.Sight] : 0f;
+            cb.SetGlobalFloat(SightFarId, sightFar > 0f ? sightFar + 0.01f : 0f);
+            cb.DrawRenderer(p.Renderer, _glassMaterial, p.Sub, 2);
+            drawn++;
+        }
+        if (targets)
+        {
+            if (_holeCheck > 0 && _holeMask != null && SystemInfo.supportsAsyncGPUReadback)
+            {
+                _holeCheck--;
+                int w0 = _holeMask.width, h0 = _holeMask.height;
+                string far0 = string.Join(", ", System.Linq.Enumerable.Select(_sightFar, x => x.ToString("F3")));
+                cb.RequestAsyncReadback(_holeMask, r =>
+                {
+                    if (r.hasError)
+                        return;
+                    var data = r.GetData<byte>();
+                    int n = 0;
+                    for (int k = 0; k < data.Length; k++)
+                        if (data[k] > 127) n++;
+                    EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens: the sights' hole is " + n + " of " + (w0 * h0) + " pixels (sights end at " + far0 + " m from the lens)");
+                });
+            }
+            cb.SetGlobalTexture(LensMaskId, _holeMask);
+            cb.SetGlobalVector(LensMaskTexelId, new Vector4(1f / _holeMask.width, 1f / _holeMask.height, _holeMask.width, _holeMask.height));
+            // (in the thermal picture's own uv, read where this frame's jitter put it)
+            Shader.SetGlobalVector(LensMaskOnId, new Vector4(1f, jitter.x, jitter.y, 1f));
+        }
+        else
+            Shader.SetGlobalVector(LensMaskOnId, Vector4.zero);
+        if (drawn != _loggedGlass)
+        {
+            _loggedGlass = drawn;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens: " + drawn + " glass part(s) of the sights cut a hole in the thermal picture where the line goes on out through them (" + _housing.Count + " housing parts in front kept)");
+        }
+    }
+
+    private static void FreeLens()
+    {
+        if (_lensCam != null)
+            Object.Destroy(_lensCam.gameObject);
+        _lensCam = null;
+        if (_lensTarget != null)
+        {
+            _lensTarget.Release();
+            Object.Destroy(_lensTarget);
+        }
+        _lensTarget = null;
+        _lensNode = null;
+        _lensItem = null;
+    }
+
+    private static void CopyMain(Camera source, Camera main, RenderTexture picture, RenderTexture normals, RenderTexture depth, RenderTexture albedo, RenderTexture specular, Vector2 jitter)
+    {
+        bool lens = source != main;
+        if (_mainCopy == null || _mainCopyCamera != source)
         {
             if (_mainCopy != null && _mainCopyCamera != null)
                 _mainCopyCamera.RemoveCommandBuffer(CameraEvent.BeforeForwardAlpha, _mainCopy);
             _mainCopy ??= new CommandBuffer { name = "Justachae ENVG scene copy" };
-            main.AddCommandBuffer(CameraEvent.BeforeForwardAlpha, _mainCopy);
-            _mainCopyCamera = main;
+            source.AddCommandBuffer(CameraEvent.BeforeForwardAlpha, _mainCopy);
+            _mainCopyCamera = source;
         }
         _mainCopy.Clear();
         _mainCopy.SetGlobalVector(JitterId, new Vector4(jitter.x, jitter.y, 0f, 0f));
-        _mainCopy.SetGlobalVector(FootprintId, new Vector4(_crop.z / normals.width, _crop.w / normals.height, 0f, 0f));
+        // (the lens camera's picture is the crop itself: one sensor pixel is 1 / its size)
+        _mainCopy.SetGlobalVector(SrcCropId, lens ? new Vector4(0f, 0f, 1f, 1f) : Vector4.zero);
+        _mainCopy.SetGlobalVector(FootprintId, lens ? new Vector4(1f / normals.width, 1f / normals.height, 0f, 0f) : new Vector4(_crop.z / normals.width, _crop.w / normals.height, 0f, 0f));
         _mainCopy.Blit(BuiltinRenderTextureType.CameraTarget, picture, Material, 25);
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer2, normals, Material, 25);
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer0, albedo, Material, 25);
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer1, specular, Material, 25);
         _mainCopy.Blit(normals, depth, Material, 12);
         DrawBodies(_mainCopy);
-        DrawScopeLens(_mainCopy, main, jitter);
+        if (lens)
+            DrawGlass(_mainCopy, depth, jitter);
+        else
+            DrawScopeLens(_mainCopy, source, jitter, lens);
         _mainCopy.SetGlobalVector(JitterId, Vector4.zero);
+        _mainCopy.SetGlobalVector(SrcCropId, Vector4.zero);
 
+        // the motion of people: the main camera's own vectors (the lens camera, rendered by hand, has none worth the
+        // name), at the same place on the screen through the crop
         if ((main.depthTextureMode & DepthTextureMode.MotionVectors) == 0)
             main.depthTextureMode |= DepthTextureMode.MotionVectors | DepthTextureMode.Depth;
-        if (_motionCopy == null)
+        if (_motionCopy == null || _motionCamera != main)
         {
-            _motionCopy = new CommandBuffer { name = "Justachae ENVG motion copy" };
+            if (_motionCopy != null && _motionCamera != null)
+                _motionCamera.RemoveCommandBuffer(CameraEvent.BeforeImageEffects, _motionCopy);
+            _motionCopy ??= new CommandBuffer { name = "Justachae ENVG motion copy" };
             main.AddCommandBuffer(CameraEvent.BeforeImageEffects, _motionCopy);
+            _motionCamera = main;
         }
         _motionCopy.Clear();
         _motionCopy.SetGlobalVector(JitterId, Vector4.zero);
+        _motionCopy.SetGlobalVector(SrcCropId, Vector4.zero);
         _motionCopy.SetGlobalVector(FootprintId, Vector4.zero);
         _motionCopy.Blit(BuiltinRenderTextureType.MotionVectors, Motion!, Material, 25);
         _motionReady = true;
