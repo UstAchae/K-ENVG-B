@@ -28,7 +28,12 @@ internal static class EnvgPods
     private static object? _cupItem;
     private static int _lookFrames;
     private static bool _logged;
-    private const int LookFor = 30;   // frames to keep looking after a change
+    private const int LookFor = 30;   // (kept for the count below: a change starts the looking)
+    // after a change, looked for a while longer, a few times a second: an eyecup fitted or taken off makes the goggle's
+    // model anew, and that model can take longer than half a second to come (the objective's marker was lost then, the
+    // thermal camera left 4 cm above the eye)
+    private const float LookSeconds = 10f, LookEvery = 0.25f;
+    private static float _lookUntil, _nextLook;
 
     internal static bool RightDown => _right < Down;
     // the thermal picture's share as the right pod leaves its place: full while down, faded out over the first third
@@ -83,9 +88,15 @@ internal static class EnvgPods
             _lookFrames = LookFor;
         }
         bool missing = _podL == null || _podR == null || _lens == null || (cup != null && (_cupL == null || _cupR == null));
-        if (missing && _lookFrames > 0)
+        if (_lookFrames > 0)
         {
-            _lookFrames--;
+            _lookUntil = Time.unscaledTime + LookSeconds;
+            _nextLook = 0f;
+            _lookFrames = 0;
+        }
+        if (missing && Time.unscaledTime < _lookUntil && Time.unscaledTime >= _nextLook)
+        {
+            _nextLook = Time.unscaledTime + LookEvery;
             Look(((Component)wearer).transform);
         }
         float l = Mathf.SmoothStep(0f, 1f, _left) * Swing, r = Mathf.SmoothStep(0f, 1f, _right) * Swing;
