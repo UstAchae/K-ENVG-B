@@ -40,3 +40,6 @@ item/built/
 server/bundles/
 __pycache__/
 item/icon_check/
+
+# release zips (package.py)
+dist/
