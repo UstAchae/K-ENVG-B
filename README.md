@@ -68,6 +68,14 @@ F12 里「目镜显示信息」可以关掉这些。
 - 瞄具会在热像上挖洞：从物镜看过去，视线穿过红点、全息或倍镜的玻璃、从瞄具前端穿出去的地方，只显示夜视画面；瞄具自己的罩子和镜筒内壁保留热像，挡在瞄具前面的手、头盔也保留自己的热像。
 - 枪和手只用当前一帧的热像，晃枪时不会拖影。
 
+## 模型来源
+
+- **ENVG-B（AN/PSQ-42）和眼罩**：CGTrader 上购买的 AN/PSQ-42 Night Vision Goggles 模型：https://www.cgtrader.com/3d-models/military/other/an-psq-42-night-vision-goggles
+
+模型按其授权用于免费模组，只以游戏资源包的形式发布，不包含原始模型文件。感谢模型作者。
+
+Model: AN/PSQ-42 Night Vision Goggles from CGTrader (link above). Used for a free mod, shipped only as game bundles; the source model is not included.
+
 ## 安装
 
 把发布的压缩包解压到 SPT 文件夹，会得到 `SPT_Runtime/user/mods/UstAchae-ENVGB`（服务端）和 `BepInEx/plugins/JustachaeENVGB`（客户端）。
@@ -84,4 +92,4 @@ Works on its own. With K-3PS-C 1.9.0 beta 1 or later installed and its master sw
 - `client/`: BepInEx plugin (thermal outline and fusion, symbology, pods)
 - `package.py`: the release zip from the built outputs (checks server and client carry one version)
 
-The purchased model sources are never committed.
+The purchased model sources are never committed (see 模型来源 above).
