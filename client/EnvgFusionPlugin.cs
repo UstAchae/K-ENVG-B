@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.3";
+    public const string Version = "0.73.4";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -139,6 +139,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
         Camera.onPreRender += EnvgFusion.OnPreRender;
         CollimatorSight.OnCollimatorEnabled += EnvgFusion.SightEnabled;
         CollimatorSight.OnCollimatorDisabled += EnvgFusion.SightDisabled;
+        EnvgChain.Note = text => Log?.LogInfo(text);
         var harmony = new Harmony(Guid);
         MethodInfo? final = AccessTools.Method(typeof(SSAAImpl), "OnRenderImage");
         if (final != null)
@@ -658,7 +659,7 @@ internal static class EnvgFusion
             }
             if (EnvgFusionPlugin.Show?.Value == EnvgFusionPlugin.ShowI2 || EnvgPods.RightShown <= 0f)
                 return;
-            Graphics.ExecuteCommandBuffer(_overlayDraw);
+            Graphics.ExecuteCommandBuffer(_overlayDraw); EnvgChain.Ran = Time.frameCount;
             RequestHistogram();
             // Drawn the way SSAAImpl draws the frame: its target, the full output as the viewport (the camera's own is
             // still the smaller render size here) and its full-screen mesh, flipped as it flips it.
@@ -728,7 +729,7 @@ internal static class EnvgFusion
         {
             // the chain and the latency ring move on once a frame, however many times the eyepieces ask
             _fusedFrame = Time.frameCount;
-            Graphics.ExecuteCommandBuffer(_overlayDraw);
+            Graphics.ExecuteCommandBuffer(_overlayDraw); EnvgChain.Ran = Time.frameCount;
             RequestHistogram();
             DelayThermal(show);
         }
