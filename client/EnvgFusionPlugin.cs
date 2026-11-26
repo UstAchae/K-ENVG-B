@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.16";
+    public const string Version = "0.73.17";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1732,6 +1732,7 @@ internal static class EnvgFusion
         public int Sight;   // which sight it belongs to (its own housing gives where that sight ends)
     }
     private static int _sightCount;
+    private static readonly List<bool> _sightScope = new List<bool>();   // each sight: a magnified scope's (its lens) or not
     private static readonly List<float> _sightFar = new List<float>();
     private static Material? _glassMaterial;
     private static Shader? _glassShader;   // (from the bundle, with the others: EnsureMaterial)
@@ -1831,6 +1832,7 @@ internal static class EnvgFusion
             }
         }
         _sightRenderers.Clear();
+        _sightScope.Add(lens != null);
         _sightCount++;
         if (_loggedSights.Add(root.name))
             EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens: sight " + root.name + ": " + (_glass.Count > glassBefore ? (_glass.Count - glassBefore) + " glass part(s): " + names : "no glass found")
@@ -1867,6 +1869,7 @@ internal static class EnvgFusion
             _glass.Clear();
             _housing.Clear();
             _sightCount = 0;
+            _sightScope.Clear();
             // the red dots and holographic sights the game has enabled near the lens (the ones it shows), and a scope's lens
             // (the one the game aims through); the gun's own if none of those
             Vector3 lensAt = _lensCam != null ? _lensCam.transform.position : Vector3.zero;
@@ -1908,6 +1911,10 @@ internal static class EnvgFusion
         foreach (GlassPart p in _glass)
         {
             if (p.Renderer == null || !p.Renderer.gameObject.activeInHierarchy)
+                continue;
+            // (a red dot's or holographic sight's glass cuts no hole: it is drawn solid with the window glass, as
+            // long-wave infrared sees it, the user's 2026-11-26; a magnified scope keeps its hole)
+            if (p.Sight >= _sightScope.Count || !_sightScope[p.Sight])
                 continue;
             if (!targets)
             {
@@ -2000,6 +2007,13 @@ internal static class EnvgFusion
         _glassGb.SetRenderTarget(GBufferTargets, BuiltinRenderTextureType.CameraTarget);
         _glassGb.SetGlobalVector(WorldGlassId, new Vector4(0.4f, 0.4f, 0.4f, 1f));
         _worldGlassDrawn = ThermalScene.DrawGlass(_glassGb, _worldGlassMaterial, _worldGlassPass, camera);
+        // the red dots' and holographic sights' glass on the gun in the hands: solid too (not a hole any more)
+        foreach (GlassPart p in _glass)
+        {
+            if (p.Renderer == null || !p.Renderer.enabled || !p.Renderer.gameObject.activeInHierarchy || p.Sight >= _sightScope.Count || _sightScope[p.Sight])
+                continue;
+            _glassGb.DrawRenderer(p.Renderer, _worldGlassMaterial, p.Sub, _worldGlassPass);
+        }
     }
 
     private static void ClearWorldGlass()
