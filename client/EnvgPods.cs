@@ -105,6 +105,55 @@ internal static class EnvgPods
         if (_podR != null) _podR.localRotation = right;
         if (_cupL != null) _cupL.localRotation = left;
         if (_cupR != null) _cupR.localRotation = right;
+        CupsAsDevice();
+    }
+
+    // Without K-3PS-C's eyepieces (not installed, switched off, or not showing the device) the game hides the goggle on its own wearer's head in first person, and the eyecups
+    // fitted to it stood in the picture (the user's: "眼罩本来就是夜视仪的子分支"): each eyecup renderer is given, every
+    // frame, what the game gives the device's own (shown or not, its shadows, its layer). With the eyepieces, they show
+    // the device and its cups themselves, and nothing is done here.
+    private static readonly List<Renderer> _cupRenderers = new List<Renderer>();
+    private static Renderer? _deviceRenderer;
+    private static Transform? _cupsOf;
+    private static bool _loggedCups;
+    private static void CupsAsDevice()
+    {
+        if (EyepieceLink.ClaimedRecently || _podL == null || _cupL == null)
+            return;
+        if (_cupsOf != _cupL || _deviceRenderer == null)
+        {
+            _cupsOf = _cupL;
+            _cupRenderers.Clear();
+            _cupL.GetComponentsInChildren(true, _cupRenderers);
+            int left = _cupRenderers.Count;
+            if (_cupR != null)
+            {
+                var right = new List<Renderer>();
+                _cupR.GetComponentsInChildren(true, right);
+                _cupRenderers.AddRange(right);
+            }
+            _deviceRenderer = _podL.GetComponentInChildren<Renderer>(true);
+            if (!_loggedCups && _deviceRenderer != null && _cupRenderers.Count > 0)
+            {
+                _loggedCups = true;
+                Renderer c = _cupRenderers[0];
+                EnvgFusionPlugin.Log?.LogInfo("ENVG-B eyecups without K-3PS-C: " + _cupRenderers.Count + " renderer(s) given the device's state (device: shown "
+                    + _deviceRenderer.enabled + ", shadows " + _deviceRenderer.shadowCastingMode + ", layer " + _deviceRenderer.gameObject.layer + ", off " + _deviceRenderer.forceRenderingOff
+                    + "; eyecup had: shown " + c.enabled + ", shadows " + c.shadowCastingMode + ", layer " + c.gameObject.layer + ", off " + c.forceRenderingOff + ")");
+            }
+        }
+        Renderer? d = _deviceRenderer;
+        if (d == null)
+            return;
+        foreach (Renderer c in _cupRenderers)
+        {
+            if (c == null)
+                continue;
+            if (c.enabled != d.enabled) c.enabled = d.enabled;
+            if (c.shadowCastingMode != d.shadowCastingMode) c.shadowCastingMode = d.shadowCastingMode;
+            if (c.forceRenderingOff != d.forceRenderingOff) c.forceRenderingOff = d.forceRenderingOff;
+            if (c.gameObject.layer != d.gameObject.layer) c.gameObject.layer = d.gameObject.layer;
+        }
     }
 
     // the thermal objective's marker on the worn device (the lens camera stands there)
