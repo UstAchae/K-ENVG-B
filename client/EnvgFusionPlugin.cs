@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.9";
+    public const string Version = "0.73.10";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1645,7 +1645,7 @@ internal static class EnvgFusion
         return cam;
     }
 
-    private static bool _loggedDecalGlass;
+    private static int _glassLoggedMax, _glassLogs;   // (logged as more window glass comes into view, a few times)
     private static void RenderLens(Camera cam)
     {
         // (no shadows, as the T-7: its ThermalVision sets the shadow distance to 0 while it renders)
@@ -1666,9 +1666,10 @@ internal static class EnvgFusion
             QualitySettings.shadowDistance = keep;
             ThermalScene.ShowDecals();
         }
-        if (!_loggedDecalGlass && (hidden > 0 || _worldGlassDrawn > 0))
+        if (_worldGlassDrawn > _glassLoggedMax && _glassLogs < 5)
         {
-            _loggedDecalGlass = true;
+            _glassLoggedMax = _worldGlassDrawn;
+            _glassLogs++;
             EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens camera: " + hidden + " decal(s) in view left out of its render, " + _worldGlassDrawn + " window glass part(s) in view drawn solid");
         }
         if (!_loggedLensGrass && _lensGrassDraws > 0)
@@ -1963,7 +1964,7 @@ internal static class EnvgFusion
     private static readonly int WorldGlassId = Shader.PropertyToID("_ThermalWorldGlass");
     private static int _worldGlassDrawn, _worldGlassPass = -2;
     private static Material? _worldGlassMaterial;
-    private static void DrawWorldGlass(CommandBuffer cb)
+    private static void DrawWorldGlass(CommandBuffer cb, Camera camera)
     {
         if (_worldGlassPass == -2)
         {
@@ -1979,7 +1980,7 @@ internal static class EnvgFusion
             return;
         cb.SetRenderTarget(BuiltinRenderTextureType.GBuffer0, BuiltinRenderTextureType.CameraTarget);
         cb.SetGlobalVector(WorldGlassId, new Vector4(0.4f, 0.4f, 0.4f, 1f));
-        _worldGlassDrawn = ThermalScene.DrawGlass(cb, _worldGlassMaterial, _worldGlassPass);
+        _worldGlassDrawn = ThermalScene.DrawGlass(cb, _worldGlassMaterial, _worldGlassPass, camera);
     }
 
     private static void CopyMain(Camera source, Camera main, RenderTexture picture, RenderTexture normals, RenderTexture depth, RenderTexture albedo, RenderTexture specular, Vector2 jitter)
@@ -2001,7 +2002,7 @@ internal static class EnvgFusion
         _mainCopy.Blit(BuiltinRenderTextureType.CameraTarget, picture, Material, 25);
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer2, normals, Material, 25);
         if (lens)
-            DrawWorldGlass(_mainCopy);
+            DrawWorldGlass(_mainCopy, source);
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer0, albedo, Material, 25);
         _mainCopy.Blit(BuiltinRenderTextureType.GBuffer1, specular, Material, 25);
         _mainCopy.Blit(normals, depth, Material, 12);
