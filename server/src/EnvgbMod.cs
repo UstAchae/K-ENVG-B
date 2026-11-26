@@ -20,7 +20,7 @@ public record ModMetadata : IModMetadata
     public string Name { get; init; } = "Justachae's ENVG-B";
     public string Author { get; init; } = "UstAchae";
     public List<string>? Contributors { get; init; }
-    public SemanticVersioning.Version Version { get; init; } = new("0.73.18");  // one version for the whole K-ENVG-B mod (client and server); bump on every change
+    public SemanticVersioning.Version Version { get; init; } = new("0.73.19");  // one version for the whole K-ENVG-B mod (client and server); bump on every change
     public SemanticVersioning.Range SptVersion { get; init; } = new("~4.1.6");
     public bool HasPrepatcher { get; init; }
     public List<string>? Incompatibilities { get; init; }
@@ -100,9 +100,9 @@ public class EnvgbMod(
             node["_name"] = e["name"]!.GetValue<string>();
             var props = node["_props"]!.AsObject();
             props["Prefab"] = new JsonObject { ["path"] = bundle, ["rcid"] = "" };
-            // The game's own night vision when nothing else draws it: round binocular field, white phosphor.
+            // The game's own night vision when nothing else draws it: the WTT PVS-31A's mask (Binocular 1.25; user: look like the PVS-31A).
             props["Mask"] = "Binocular";
-            props["MaskSize"] = 0.96;
+            props["MaskSize"] = 1.25;
             // White phosphor (P45), blue-white. The look the user picked as the target (a white-phosphor tube in another mod)
             // keeps one hue from shadows to highlights, R:G:B 0.61:0.85:1, at a mean brightness 0.41x ours: with the
             // GPNVG-18's gain (2.27) our highlights clipped to white (0.91:0.98:1) and the tint was lost. Hue and gain set to

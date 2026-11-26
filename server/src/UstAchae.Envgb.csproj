@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputType>Library</OutputType>
-    <Version>0.73.18</Version>
+    <Version>0.73.19</Version>
     <AssemblyName>UstAchae.Envgb</AssemblyName>
     <RootNamespace>UstAchae.Envgb</RootNamespace>
     <EnableDynamicLoading>true</EnableDynamicLoading>
