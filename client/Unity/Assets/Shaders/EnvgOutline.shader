@@ -1661,7 +1661,9 @@ Shader "Justachae/ENVG/Outline"
                     sd = -(length(max(q, 0.0)) + min(max(q.x, q.y), 0.0));
                     reach = i.kind - 1.0;
                 }
-                float core = saturate(sd + 0.5);
+                // (the core's edge eased over a pixel and a half, not one: the symbology moves with the goggle a fraction of a
+                // pixel each frame, and strokes a pixel or two wide flickered as they fell between pixels: the user's 2026-11-27)
+                float core = saturate(sd / 1.5 + 0.5);
                 float beyond = saturate(-sd / max(reach, 0.5));
                 float fall = exp(-max(-sd, 0.0) / max(_EnvgHudCore.w, 0.5)) * (1.0 - beyond) * (1.0 - beyond);
                 float glow = fall * (1.0 - core) * _EnvgHudGlow.a;
