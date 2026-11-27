@@ -44,6 +44,8 @@ internal static class EnvgPods
 
     internal static void Toggle(bool right)
     {
+        if (EyepieceLink.TurnsPods)
+            return;   // K-3PS-C keeps the pods and has the keys
         if (right)
             _wantRight = !_wantRight;
         else
@@ -70,9 +72,22 @@ internal static class EnvgPods
         }
         if (device == null || wearer == null)
             return;
-        float step = Time.deltaTime / Travel;
-        _left = Mathf.MoveTowards(_left, _wantLeft ? 1f : 0f, step);
-        _right = Mathf.MoveTowards(_right, _wantRight ? 1f : 0f, step);
+        // K-3PS-C keeps the pods (handed over): it turns the nodes, on every model of the player, and remembers them;
+        // only where the worn goggle's pods are is read here (the thermal picture goes with the right pod)
+        bool theirs = EyepieceLink.TurnsPods;
+        if (theirs)
+        {
+            _left = Mathf.Clamp01(EyepieceLink.PodUp(0));
+            _right = Mathf.Clamp01(EyepieceLink.PodUp(1));
+            _wantLeft = _left > 0.5f;
+            _wantRight = _right > 0.5f;
+        }
+        else
+        {
+            float step = Time.deltaTime / Travel;
+            _left = Mathf.MoveTowards(_left, _wantLeft ? 1f : 0f, step);
+            _right = Mathf.MoveTowards(_right, _wantRight ? 1f : 0f, step);
+        }
 
         // an eyecup fitted or taken off, or a node gone: look again (for a few frames)
         object? cup = _cupSlot?.ContainedItem;
@@ -105,12 +120,15 @@ internal static class EnvgPods
             _nextLook = Time.unscaledTime + LookEvery;
             Look(((Component)wearer).transform);
         }
-        float l = Mathf.SmoothStep(0f, 1f, _left) * Swing, r = Mathf.SmoothStep(0f, 1f, _right) * Swing;
-        Quaternion left = Quaternion.AngleAxis(l, Vector3.up), right = Quaternion.AngleAxis(r, Vector3.down);
-        if (_podL != null) _podL.localRotation = left;
-        if (_podR != null) _podR.localRotation = right;
-        if (_cupL != null) _cupL.localRotation = left;
-        if (_cupR != null) _cupR.localRotation = right;
+        if (!theirs)
+        {
+            float l = Mathf.SmoothStep(0f, 1f, _left) * Swing, r = Mathf.SmoothStep(0f, 1f, _right) * Swing;
+            Quaternion left = Quaternion.AngleAxis(l, Vector3.up), right = Quaternion.AngleAxis(r, Vector3.down);
+            if (_podL != null) _podL.localRotation = left;
+            if (_podR != null) _podR.localRotation = right;
+            if (_cupL != null) _cupL.localRotation = left;
+            if (_cupR != null) _cupR.localRotation = right;
+        }
         CupsAsDevice();
     }
 

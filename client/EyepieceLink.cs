@@ -36,6 +36,7 @@ internal static class EyepieceLink
                 if (assembly.GetName().Name == AssemblyName)
                 {
                     type = assembly.GetType(TypeName, false);
+                    BindPods(assembly);
                     break;
                 }
             if (type == null)
@@ -70,6 +71,54 @@ internal static class EyepieceLink
         {
             _claimedFrame = null;
             EnvgFusionPlugin.Log?.LogWarning("ENVG: binding K-3PS-C's EyepieceFusion failed, the picture goes over the screen: " + e.Message);
+        }
+    }
+
+    // ---- the pods' sideways swing kept by K-3PS-C (EyepiecePods v1, optional) ----
+    // K-3PS-C keeps which pod is up as a state of the goggle (remembered by item, drawn on every model of the player:
+    // the loading screen, the inventory, the overview), with its own keys; the user's, 2026-11-27. Handed over once
+    // here; from then on it turns the pod nodes and we only read where the worn goggle's pods are. Without it (not
+    // installed, or an older one) our own swing stays as it was.
+    private const string PodsTypeName = "EFTNewCamera.Interop.EyepiecePods";
+    private const string DeviceNode = "nvg_envgb_psq42_LOD0";
+    private static Func<string, bool>? _podsTurn;
+    private static Func<int, float>? _podUp;
+    internal static bool TurnsPods => _podsTurn != null && _podsTurn(DeviceNode);
+    internal static float PodUp(int pod) => _podUp != null ? _podUp(pod) : 0f;
+
+    private static void BindPods(Assembly assembly)
+    {
+        try
+        {
+            Type? type = assembly.GetType(PodsTypeName, false);
+            if (type == null)
+            {
+                EnvgFusionPlugin.Log?.LogInfo("ENVG-B pods: this K-3PS-C does not keep them (no EyepiecePods), they swing by this mod's own keys");
+                return;
+            }
+            FieldInfo? version = type.GetField("Version", BindingFlags.Public | BindingFlags.Static);
+            int v = version != null ? (int)version.GetValue(null) : 0;
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+            MethodInfo? hand = type.GetMethod("HandOver", flags, null, new[] { typeof(string) }, null);
+            MethodInfo? turns = type.GetMethod("Turns", flags, null, new[] { typeof(string) }, null);
+            MethodInfo? up = type.GetMethod("Up", flags, null, new[] { typeof(int) }, null);
+            if (v != 1 || hand == null || turns == null || up == null || turns.ReturnType != typeof(bool) || up.ReturnType != typeof(float))
+            {
+                EnvgFusionPlugin.Log?.LogWarning("ENVG-B pods: K-3PS-C's EyepiecePods is version " + v + " or missing a member, they swing by this mod's own keys");
+                return;
+            }
+            var turnsFn = (Func<string, bool>)Delegate.CreateDelegate(typeof(Func<string, bool>), turns);
+            var upFn = (Func<int, float>)Delegate.CreateDelegate(typeof(Func<int, float>), up);
+            hand.Invoke(null, new object[] { DeviceNode });
+            _podUp = upFn;
+            _podsTurn = turnsFn;
+            EnvgFusionPlugin.Log?.LogInfo("ENVG-B pods: handed over to K-3PS-C (EyepiecePods v1), taken: " + turnsFn(DeviceNode) + "; it turns and keeps them, this mod's pod keys do nothing");
+        }
+        catch (Exception e)
+        {
+            _podsTurn = null;
+            _podUp = null;
+            EnvgFusionPlugin.Log?.LogWarning("ENVG-B pods: handing them over to K-3PS-C failed, they swing by this mod's own keys: " + e.Message);
         }
     }
 
