@@ -83,8 +83,9 @@ Model: AN/PSQ-42 Night Vision Goggles by durchacht on CGTrader (links above). Us
 
 - 配合 **K-3PS-C 1.9.0 beta 1 或更新版本**，并打开它的总开关：ENVG-B 像其他夜视仪一样通过目镜成像，双眼合并，支架可调，两个目镜可以各自掰起；热像画在右目镜里，大小和位置按眼睛实际看到的镜片来定。
 - 用旧版 K-3PS-C（最后一个正式版是 1.8.2）或不装：ENVG-B 用游戏原版的全屏夜视，加上本模组的白磷效果，热像铺满整个屏幕。
+- 装了 BorkelRNVG 时：ENVG-B 按它的 PVS-31A 来画（遮罩、镜片、设置），磷光颜色固定为本模组的白磷，BorkelRNVG 的 F12 改不了这个颜色。
 
-Works on its own. With K-3PS-C 1.9.0 beta 1 or later installed and its master switch on, the device is imaged through its eyepieces like the other night vision goggles, and the thermal picture is drawn into the right eyepiece. With an older K-3PS-C or without it, the ENVG-B uses the game's own full-screen night vision, its white phosphor and the thermal picture laid over the whole screen.
+Works on its own. With K-3PS-C 1.9.0 beta 1 or later installed and its master switch on, the device is imaged through its eyepieces like the other night vision goggles, and the thermal picture is drawn into the right eyepiece. With an older K-3PS-C or without it, the ENVG-B uses the game's own full-screen night vision, its white phosphor and the thermal picture laid over the whole screen. With BorkelRNVG installed, the ENVG-B is drawn as its PVS-31A (mask, lens, settings), with the phosphor colour fixed to this mod's white phosphor.
 
 ## 仓库（开发用）
 
