@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.31";
+    public const string Version = "0.73.32";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1668,8 +1668,21 @@ internal static class EnvgFusion
         // (held to the eye as the goggle is: the objective's place from the eye, followed only slowly, so the head
         // model's own small swaying with the breath and the stance does not shake the thermal picture against the
         // tubes'; a real change (the mount adjusted, the goggle flipped, another model) of more than 2 cm taken at once)
+        // Without K-3PS-C's eyepieces the game's first-person camera is not where the head model's eyes are (the body is
+        // drawn apart from it, and sways and bobs against it while running): the objective's marker on the head model
+        // shook the thermal picture left and right while running (the user's, K-3PS-C off). There the objective keeps the
+        // place the eyepieces last measured from the eye, or the device's own until they have.
         Vector3 local = eye.InverseTransformPoint(node.position);
-        if (!_lensOffsetSet || (local - _lensOffset).sqrMagnitude > 0.02f * 0.02f)
+        bool eyepieces = EyepieceLink.ClaimedRecently;
+        if (!eyepieces)
+        {
+            if (!_lensOffsetSet)
+            {
+                _lensOffset = new Vector3(0f, 0.036f, 0.111f);
+                _lensOffsetSet = true;
+            }
+        }
+        else if (!_lensOffsetSet || (local - _lensOffset).sqrMagnitude > 0.02f * 0.02f)
         {
             _lensOffset = local;
             _lensOffsetSet = true;
