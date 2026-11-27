@@ -77,11 +77,16 @@ internal static class EnvgPods
         object? cup = _cupSlot?.ContainedItem;
         if (!ReferenceEquals(cup, _cupItem))
         {
+            // (the goggle's model is made anew: every node looked for again, the objective's marker too; kept, the old
+            // model's marker stood where the game laid the old model aside, and the thermal camera with it: the user's,
+            // the eyecups taken off)
             _cupItem = cup;
             _cupL = _cupR = null;
+            _podL = _podR = null;
+            _lens = null;
             _lookFrames = LookFor;
         }
-        if ((_podL is not null && _podL == null) || (_podR is not null && _podR == null) || (_lens is not null && _lens == null))
+        if (Gone(_podL) || Gone(_podR) || Gone(_lens))
         {
             _podL = _podR = null;
             _lens = null;
@@ -160,13 +165,18 @@ internal static class EnvgPods
     private static Transform? _lens;
     internal static Transform? Lens => _lens;
 
-    // the device's and the eyecup's pod nodes on the wearer
+    // a node destroyed, or on a model the game has put aside (not shown: a model made anew leaves the old one inactive)
+    private static bool Gone(Transform? t) => t is not null && (t == null || !t.gameObject.activeInHierarchy);
+
+    // the device's and the eyecup's pod nodes on the wearer (on the shown model only)
     private static readonly List<Transform> _found = new List<Transform>();
     private static void Look(Transform wearer)
     {
         wearer.GetComponentsInChildren(true, _found);
         foreach (Transform t in _found)
         {
+            if (!t.gameObject.activeInHierarchy)
+                continue;
             switch (t.name)
             {
                 case "envgb_pod_L": _podL = t; break;

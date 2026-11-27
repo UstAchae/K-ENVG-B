@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.19";
+    public const string Version = "0.73.20";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1543,6 +1543,8 @@ internal static class EnvgFusion
     private static RenderTexture? _lensTarget;
     private static int _lensJitter;
     private static bool _loggedLens, _loggedLensGrass;
+    private static Transform? _loggedLensNode;
+    private static int _lensLogs;
     private static int _loggedLensSearch; private static bool _loggedLensFound;
     private static Camera? _motionCamera;
     private static int _lensGrassDraws;
@@ -1642,9 +1644,12 @@ internal static class EnvgFusion
         p.m12 += 2f * jy / h;
         drawn = p;
         cam.projectionMatrix = p;
-        if (!_loggedLens || (node != null) != _loggedLensFound)
+        // (logged again when the marker is another one, a model made anew: a few times)
+        if (!_loggedLens || (node != null) != _loggedLensFound || (node != _loggedLensNode && _lensLogs < 6))
         {
             _loggedLens = true;
+            _loggedLensNode = node;
+            _lensLogs++;
             _loggedLensFound = node != null;
             Vector3 off = eye.InverseTransformPoint(at);
             EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens camera: " + "at the goggle's objective (" + node.name + ")"
