@@ -53,6 +53,7 @@ internal static class EnvgPods
     // once a frame: the swing, and the nodes turned to it
     internal static void Update(EFT.Player? wearer, EFT.InventoryLogic.Item? device)
     {
+        SyncCups();
         if (!ReferenceEquals(device, _device))
         {
             _device = device;
@@ -113,6 +114,7 @@ internal static class EnvgPods
         CupsAsDevice();
     }
 
+    // (the lists for SyncCups: made when the nodes are known)
     // Without K-3PS-C's eyepieces (not installed, switched off, or not showing the device) the game hides the goggle on its own wearer's head in first person, and the eyecups
     // fitted to it stood in the picture (the user's: "眼罩本来就是夜视仪的子分支"): each eyecup renderer is given, every
     // frame, what the game gives the device's own (shown or not, its shadows, its layer). With the eyepieces, they show
@@ -121,9 +123,10 @@ internal static class EnvgPods
     private static Renderer? _deviceRenderer;
     private static Transform? _cupsOf;
     private static bool _loggedCups;
+    private static int _cupSyncLogs;
     private static void CupsAsDevice()
     {
-        if (EyepieceLink.ClaimedRecently || _podL == null || _cupL == null)
+        if (_podL == null || _cupL == null)
             return;
         if (_cupsOf != _cupL || _deviceRenderer == null)
         {
@@ -147,13 +150,34 @@ internal static class EnvgPods
                     + "; eyecup had: shown " + c.enabled + ", shadows " + c.shadowCastingMode + ", layer " + c.gameObject.layer + ", off " + c.forceRenderingOff + ")");
             }
         }
+    }
+
+    // The eyecups' renderers kept as the device's own, every frame, whoever wears it or looks: also where no wearer or
+    // worn device is known (the hideout's overview before the range: the game hid the goggle there, its night vision
+    // still on, and the cups, left as they were, hung in the picture: the user's, 0.73.41)
+    private static void SyncCups()
+    {
+        if (EyepieceLink.ClaimedRecently || _cupRenderers.Count == 0)
+            return;
         Renderer? d = _deviceRenderer;
         if (d == null)
+        {
+            _cupRenderers.Clear();
+            _cupsOf = null;
             return;
+        }
         foreach (Renderer c in _cupRenderers)
         {
             if (c == null)
                 continue;
+            if (c.enabled != d.enabled || c.shadowCastingMode != d.shadowCastingMode || c.forceRenderingOff != d.forceRenderingOff)
+            {
+                if (_cupSyncLogs < 4)
+                {
+                    _cupSyncLogs++;
+                    EnvgFusionPlugin.Log?.LogInfo("ENVG-B eyecups follow the device: now shown " + d.enabled + ", shadows " + d.shadowCastingMode + ", off " + d.forceRenderingOff + " (were shown " + c.enabled + ", shadows " + c.shadowCastingMode + ", off " + c.forceRenderingOff + ")");
+                }
+            }
             if (c.enabled != d.enabled) c.enabled = d.enabled;
             if (c.shadowCastingMode != d.shadowCastingMode) c.shadowCastingMode = d.shadowCastingMode;
             if (c.forceRenderingOff != d.forceRenderingOff) c.forceRenderingOff = d.forceRenderingOff;
