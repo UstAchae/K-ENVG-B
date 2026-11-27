@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.27";
+    public const string Version = "0.73.28";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -539,7 +539,7 @@ internal static class EnvgFusion
         t.GeometryEdges = EnvgFusionPlugin.GeometryEdges?.Value ?? 0f;
         t.LocalContrast = EnvgFusionPlugin.LocalContrast?.Value ?? 0.35f;
         t.ShapeNeedsHeat = EnvgFusionPlugin.ShapeNeedsHeat?.Value ?? 1f;
-        t.Temporal = 0f;   // no history of the heat or the lines: it smeared the picture while walking (the user's, 2026-11-27)
+        t.Temporal = 0.8f;   // the heat's and the lines' history, as the game's TAA (see the shader's pass 36: a few frames while it moves)
         t.HeatTemporal = t.Temporal;
         t.Declutter = EnvgFusionPlugin.Declutter?.Value ?? 0f;
         t.MinSpread = EnvgFusionPlugin.MinSpread?.Value ?? 3f;
@@ -1571,6 +1571,17 @@ internal static class EnvgFusion
     // the lens camera placed for this frame: its projection the crop of the main camera's unjittered field with our
     // jitter (drawn) and without (unjittered); null if it can't be made
     private static Vector3 _lensOffset;
+    private static int _lensJitter;
+    private static float Halton(int index, int b)
+    {
+        float f = 1f, r = 0f;
+        for (int i = index; i > 0; i /= b)
+        {
+            f /= b;
+            r += f * (i % b);
+        }
+        return r;
+    }
     private static bool _lensOffsetSet;
     private static Camera? PlaceLens(Camera main, Matrix4x4 full, int width, int height, out Matrix4x4 drawn, out Matrix4x4 unjittered)
     {
@@ -1648,9 +1659,12 @@ internal static class EnvgFusion
         p.m11 = full.m11 / c.w; p.m12 = (full.m12 + oy) / c.w;
         unjittered = p;
         // our jitter: half a thermal pixel either way
-        // (no sub-pixel jitter of its own any more: it was there for the heat's history to gather, and the history is
-        // gone (it smeared the picture while walking with K-3PS-C's eyepieces); without the history the jitter only
-        // made the edges shimmer, the user's 2026-11-27)
+        // our jitter: half a thermal pixel either way (the history gathers it: the thermal lens's anti-aliasing, as the
+        // game's TAA has the main camera's; without it thin far things came and went from frame to frame)
+        _lensJitter = (_lensJitter + 1) & 7;
+        float jx = (Halton(_lensJitter + 1, 2) - 0.5f) * LensSupersample, jy = (Halton(_lensJitter + 1, 3) - 0.5f) * LensSupersample;
+        p.m02 += 2f * jx / w;
+        p.m12 += 2f * jy / h;
         drawn = p;
         cam.projectionMatrix = p;
         // (logged again when the marker is another one, a model made anew: a few times)
