@@ -24,13 +24,13 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.20";
+    public const string Version = "0.73.22";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
     internal static ManualLogSource? Log;
     internal static ConfigEntry<bool>? On, WhitePhosphor, Symbology, FromLens;
-    internal static ConfigEntry<float>? GrassAmount, ThermalField, Latency, MinSpread, BodyHeat, ShapeNeedsHeat, Washout, Temporal, LineWidth, Brightness, Amount, TubeBrightness, Softness, Glow, Smoothing, AirTemperature, I2Noise, HeatEdges, GeometryEdges, Declutter, LocalContrast;
+    internal static ConfigEntry<float>? GrassAmount, ThermalField, Latency, MinSpread, BodyHeat, ShapeNeedsHeat, Washout, LineWidth, Brightness, Amount, TubeBrightness, Softness, Glow, Smoothing, AirTemperature, I2Noise, HeatEdges, GeometryEdges, Declutter, LocalContrast;
     internal static ConfigEntry<float>? SensorResolution;
     internal static ConfigEntry<int>? RenderScale;
     internal static ConfigEntry<string>? Show;
@@ -116,8 +116,6 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
             new ConfigDescription("像真热像：物体的外形只在两侧有温差的地方出线（树冠对天空、人对环境），叶子对叶子这种温度一样的地方不出线。0 是外形全画。", new AcceptableValueRange<float>(0f, 1f), advanced));
         Washout = Config.Bind(Advanced, "亮处淡出", 1f,
             new ConfigDescription("热像轮廓和夜视画面是两束光相加：被灯照亮、夜视画面接近发白的地方，轮廓融进亮背景里看不出来，暗处的轮廓才醒目（像实物视频里那样）。0 是不淡出。", new AcceptableValueRange<float>(0f, 1f), advanced));
-        Temporal = Config.Bind(Advanced, "时间平滑", 0.8f,
-            new ConfigDescription("像游戏的 TAA：用游戏自己的运动矢量把上一帧对齐后，和这一帧的热像、边缘强度混合（热像画面和轮廓线都不随游戏每帧的亚像素抖动闪动）。越大越稳，0 是关。", new AcceptableValueRange<float>(0f, 0.95f), advanced));
         Declutter = Config.Bind(Advanced, "去杂乱", 0f,
             new ConfigDescription("线密集的地方（树冠）压暗。0 是不压。", new AcceptableValueRange<float>(0f, 1f), advanced));
         LocalContrast = Config.Bind(Advanced, "局部对比", 0.35f,
@@ -541,7 +539,7 @@ internal static class EnvgFusion
         t.GeometryEdges = EnvgFusionPlugin.GeometryEdges?.Value ?? 0f;
         t.LocalContrast = EnvgFusionPlugin.LocalContrast?.Value ?? 0.35f;
         t.ShapeNeedsHeat = EnvgFusionPlugin.ShapeNeedsHeat?.Value ?? 1f;
-        t.Temporal = EnvgFusionPlugin.Temporal?.Value ?? 0.8f;
+        t.Temporal = 0f;   // no history of the heat or the lines: it smeared the picture while walking (the user's, 2026-11-27)
         t.HeatTemporal = t.Temporal;
         t.Declutter = EnvgFusionPlugin.Declutter?.Value ?? 0f;
         t.MinSpread = EnvgFusionPlugin.MinSpread?.Value ?? 3f;
@@ -1541,7 +1539,6 @@ internal static class EnvgFusion
     private const float LensNear = 0.03f;    // the goggle's own housing around the window left out
     private static Camera? _lensCam;
     private static RenderTexture? _lensTarget;
-    private static int _lensJitter;
     private static bool _loggedLens, _loggedLensGrass;
     private static Transform? _loggedLensNode;
     private static int _lensLogs;
@@ -1551,16 +1548,6 @@ internal static class EnvgFusion
     private static bool _lensActive;   // this frame the lens camera is in use (its objective found)
     internal static bool LensWanted => EnvgFusionPlugin.FromLens?.Value == true && _lensActive;
 
-    private static float Halton(int index, int b)
-    {
-        float f = 1f, r = 0f;
-        for (int i = index; i > 0; i /= b)
-        {
-            f /= b;
-            r += f * (i % b);
-        }
-        return r;
-    }
 
     // the window of the thermal objective on the worn goggle (found again only when the goggle changes, at most once a
     // second while it is not found)
@@ -1638,10 +1625,9 @@ internal static class EnvgFusion
         p.m11 = full.m11 / c.w; p.m12 = (full.m12 + oy) / c.w;
         unjittered = p;
         // our jitter: half a thermal pixel either way
-        _lensJitter = (_lensJitter + 1) & 7;
-        float jx = (Halton(_lensJitter + 1, 2) - 0.5f) * LensSupersample, jy = (Halton(_lensJitter + 1, 3) - 0.5f) * LensSupersample;
-        p.m02 += 2f * jx / w;
-        p.m12 += 2f * jy / h;
+        // (no sub-pixel jitter of its own any more: it was there for the heat's history to gather, and the history is
+        // gone (it smeared the picture while walking with K-3PS-C's eyepieces); without the history the jitter only
+        // made the edges shimmer, the user's 2026-11-27)
         drawn = p;
         cam.projectionMatrix = p;
         // (logged again when the marker is another one, a model made anew: a few times)
