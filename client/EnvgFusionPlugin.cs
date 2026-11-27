@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.23";
+    public const string Version = "0.73.25";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -1570,6 +1570,8 @@ internal static class EnvgFusion
 
     // the lens camera placed for this frame: its projection the crop of the main camera's unjittered field with our
     // jitter (drawn) and without (unjittered); null if it can't be made
+    private static Vector3 _lensOffset;
+    private static bool _lensOffsetSet;
     private static Camera? PlaceLens(Camera main, Matrix4x4 full, int width, int height, out Matrix4x4 drawn, out Matrix4x4 unjittered)
     {
         drawn = unjittered = full;
@@ -1625,7 +1627,18 @@ internal static class EnvgFusion
             unjittered = main.nonJitteredProjectionMatrix;
             return null;
         }
-        Vector3 at = node.position;
+        // (held to the eye as the goggle is: the objective's place from the eye, followed only slowly, so the head
+        // model's own small swaying with the breath and the stance does not shake the thermal picture against the
+        // tubes'; a real change (the mount adjusted, the goggle flipped, another model) of more than 2 cm taken at once)
+        Vector3 local = eye.InverseTransformPoint(node.position);
+        if (!_lensOffsetSet || (local - _lensOffset).sqrMagnitude > 0.02f * 0.02f)
+        {
+            _lensOffset = local;
+            _lensOffsetSet = true;
+        }
+        else
+            _lensOffset = Vector3.Lerp(_lensOffset, local, 1f - Mathf.Exp(-Time.unscaledDeltaTime / 0.5f));
+        Vector3 at = eye.TransformPoint(_lensOffset);
         cam.transform.SetPositionAndRotation(at, eye.rotation);
         // the crop of the full field (uv x, y, w, h) as an off-centre projection
         Vector4 c = _crop.z > 0f ? _crop : new Vector4(0f, 0f, 1f, 1f);
