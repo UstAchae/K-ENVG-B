@@ -24,7 +24,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 {
     public const string Guid = "justachae.envgfusion";
     public const string Name = "Justachae's ENVG-B Thermal Outline";
-    public const string Version = "0.73.44";
+    public const string Version = "0.73.45";
     private const string Section = "ENVG-B 热像轮廓";
     private const string Advanced = "ENVG-B 热像轮廓 · 高级";
 
@@ -158,6 +158,7 @@ public sealed class EnvgFusionPlugin : BaseUnityPlugin
 
     private void Update()
     {
+        ThermalScene.Tick();
         BrnvgLink.Ensure();
         // Alt + ← →: the pods (not while a menu, the inventory or the map has the cursor); with Alt held the plain arrows
         // don't switch the mode
@@ -1747,7 +1748,7 @@ internal static class EnvgFusion
         {
             _glassLoggedMax = _worldGlassDrawn;
             _glassLogs++;
-            EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens camera: " + hidden + " decal(s) in view left out of its render, " + _worldGlassDrawn + " window glass part(s) in view drawn solid");
+            EnvgFusionPlugin.Log?.LogInfo("ENVG thermal lens camera: " + hidden + " decal(s) in view left out of its render, " + _worldGlassDrawn + " window glass draw(s) in view (merged blocks, single panes, broken pieces)");
         }
         if (!_loggedLensGrass && _lensGrassDraws > 0)
         {
